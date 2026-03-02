@@ -109,6 +109,8 @@ export interface SelectionConfig {
 export interface PeerConnectionConfig {
   iceServers: RTCIceServer[];
   iceTransportPolicy: RTCIceTransportPolicy;
+  bundlePolicy?: RTCBundlePolicy; // default: 'max-bundle' for security
+  rtcpMuxPolicy?: RTCRtcpMuxPolicy; // default: 'require' for security
 }
 
 // ============================================================================
@@ -127,6 +129,11 @@ export interface JoinMessage extends SignalingMessage {
   participantInfo: {
     id: string;
     name: string;
+  };
+  // Authentication credentials (Task 14.7, Requirement 12.4)
+  auth?: {
+    token: string;
+    timestamp: number;
   };
 }
 

@@ -14,16 +14,32 @@ import {
   Conference,
   SelectionConfig,
 } from '../shared/types';
+import { AuthProvider, AuthCredentials } from '../shared/auth';
 
 /**
  * Configuration for the signaling server
+ * 
+ * Task 14.3, Requirement 12.2: TLS encryption for signaling
+ * Task 14.7, Requirement 12.4: Participant authentication
  */
 export interface SignalingServerConfig {
   port: number;
   tlsOptions?: {
     key: Buffer;
     cert: Buffer;
+    // Optional: Certificate authority for client certificate verification
+    ca?: Buffer;
+    // Optional: Request client certificate for mutual TLS
+    requestCert?: boolean;
+    // Optional: Reject unauthorized clients
+    rejectUnauthorized?: boolean;
   };
+  // Enforce TLS - reject non-TLS connections (Requirement 12.2)
+  enforceTLS?: boolean; // default: true in production
+  // Authentication provider (Requirement 12.4)
+  authProvider?: AuthProvider;
+  // Require authentication for all operations (Requirement 12.4)
+  requireAuth?: boolean; // default: true in production
 }
 
 /**
@@ -49,23 +65,52 @@ export class SignalingServer {
   private participants: Map<string, ConnectedParticipant> = new Map();
   private conferences: Map<string, Conference> = new Map();
   private config: SignalingServerConfig;
+  private authenticatedParticipants: Set<string> = new Set(); // Track authenticated participants
 
   constructor(config: SignalingServerConfig) {
-    this.config = config;
+    this.config = {
+      enforceTLS: true, // Default to enforcing TLS (Requirement 12.2)
+      requireAuth: true, // Default to requiring authentication (Requirement 12.4)
+      ...config,
+    };
   }
 
   /**
    * Start the signaling server
    * Requirement 10.1, 10.2, 10.6, 12.2
+   * 
+   * Task 14.3: Enforces TLS for all WebSocket connections when configured
    */
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
+        // Enforce TLS in production (Requirement 12.2)
+        if (this.config.enforceTLS && !this.config.tlsOptions) {
+          reject(new Error(
+            'TLS is enforced but tlsOptions not provided. ' +
+            'Set enforceTLS: false only for development/testing.'
+          ));
+          return;
+        }
+
         // Create HTTP or HTTPS server based on TLS configuration
         if (this.config.tlsOptions) {
-          this.server = https.createServer(this.config.tlsOptions);
+          // Create HTTPS server with TLS encryption (Requirement 12.2)
+          this.server = https.createServer({
+            key: this.config.tlsOptions.key,
+            cert: this.config.tlsOptions.cert,
+            ca: this.config.tlsOptions.ca,
+            requestCert: this.config.tlsOptions.requestCert || false,
+            rejectUnauthorized: this.config.tlsOptions.rejectUnauthorized || false,
+          });
+          console.log('Signaling server starting with TLS encryption enabled');
         } else {
+          // Create HTTP server (only for development/testing)
           this.server = http.createServer();
+          console.warn(
+            'WARNING: Signaling server starting WITHOUT TLS encryption. ' +
+            'This should only be used for development/testing!'
+          );
         }
 
         // Create WebSocket server
@@ -168,6 +213,7 @@ export class SignalingServer {
 
     const conferenceId = participant.conferenceId;
     this.participants.delete(participantId);
+    this.authenticatedParticipants.delete(participantId); // Remove from authenticated set
 
     // Update conference state
     const conference = this.conferences.get(conferenceId);
@@ -184,13 +230,29 @@ export class SignalingServer {
   /**
    * Handle incoming signaling message
    * Routes messages to appropriate handlers
-   * Requirement 10.1, 10.4, 10.5, 10.6
+   * Requirement 10.1, 10.4, 10.5, 10.6, 12.4
+   * 
+   * Task 14.7: Verifies authentication before allowing operations
    */
   private handleMessage(ws: WebSocket, message: SignalingMessage): void {
+    // Join messages are handled separately (they establish authentication)
+    if (message.type === 'join') {
+      this.handleJoin(ws, message as JoinMessage);
+      return;
+    }
+
+    // For all other operations, verify participant is authenticated (Requirement 12.4)
+    if (this.config.requireAuth && !this.authenticatedParticipants.has(message.from)) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Not authenticated. Please join first.',
+        code: 'NOT_AUTHENTICATED',
+      }));
+      return;
+    }
+
+    // Route to appropriate handler
     switch (message.type) {
-      case 'join':
-        this.handleJoin(ws, message as JoinMessage);
-        break;
       case 'topology-update':
         this.handleTopologyUpdate(message as TopologyUpdateMessage);
         break;
@@ -216,11 +278,47 @@ export class SignalingServer {
 
   /**
    * Handle participant join
-   * Requirement 10.2
+   * Requirement 10.2, 12.4
+   * 
+   * Task 14.7: Authenticates participant before allowing conference access
    */
-  private handleJoin(ws: WebSocket, message: JoinMessage): void {
+  private async handleJoin(ws: WebSocket, message: JoinMessage): Promise<void> {
     const { conferenceId, participantInfo } = message;
     const participantId = participantInfo.id;
+
+    // Authenticate participant (Requirement 12.4)
+    if (this.config.requireAuth) {
+      if (!message.auth || !this.config.authProvider) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Authentication required',
+          code: 'AUTH_REQUIRED',
+        }));
+        ws.close();
+        return;
+      }
+
+      const authCredentials: AuthCredentials = {
+        participantId,
+        token: message.auth.token,
+        timestamp: message.auth.timestamp,
+      };
+
+      const authResult = await this.config.authProvider.verify(authCredentials);
+
+      if (!authResult.authenticated) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: `Authentication failed: ${authResult.error}`,
+          code: 'AUTH_FAILED',
+        }));
+        ws.close();
+        return;
+      }
+
+      // Mark participant as authenticated
+      this.authenticatedParticipants.add(participantId);
+    }
 
     // Store participant connection
     this.participants.set(participantId, {
@@ -427,5 +525,56 @@ export class SignalingServer {
    */
   isParticipantConnected(participantId: string): boolean {
     return this.participants.has(participantId);
+  }
+
+  /**
+   * Check if TLS encryption is enabled (Task 14.3)
+   * 
+   * @returns True if server is using TLS encryption
+   * 
+   * Requirement 12.2: All signaling messages must be encrypted using TLS
+   */
+  isTLSEnabled(): boolean {
+    return this.config.tlsOptions !== undefined;
+  }
+
+  /**
+   * Get server configuration info (Task 14.3, 14.7)
+   * Useful for monitoring and diagnostics
+   * 
+   * @returns Object with server configuration details
+   */
+  getServerInfo(): {
+    tlsEnabled: boolean;
+    enforceTLS: boolean;
+    authEnabled: boolean;
+    requireAuth: boolean;
+    port: number;
+    activeConnections: number;
+    activeConferences: number;
+    authenticatedParticipants: number;
+  } {
+    return {
+      tlsEnabled: this.isTLSEnabled(),
+      enforceTLS: this.config.enforceTLS || false,
+      authEnabled: this.config.authProvider !== undefined,
+      requireAuth: this.config.requireAuth || false,
+      port: this.config.port,
+      activeConnections: this.participants.size,
+      activeConferences: this.conferences.size,
+      authenticatedParticipants: this.authenticatedParticipants.size,
+    };
+  }
+
+  /**
+   * Check if a participant is authenticated (Task 14.7)
+   * 
+   * @param participantId - ID of the participant to check
+   * @returns True if participant is authenticated
+   * 
+   * Requirement 12.4: Authentication required before conference operations
+   */
+  isParticipantAuthenticated(participantId: string): boolean {
+    return this.authenticatedParticipants.has(participantId);
   }
 }

@@ -25,6 +25,7 @@ describe('SignalingClient - Edge Cases', () => {
       participantName: 'Test Participant',
       reconnectIntervalMs: 100,
       maxReconnectAttempts: 3,
+      enforceSecureConnection: false, // Allow ws:// for testing
     });
   });
 

@@ -27,4 +27,7 @@ export const DEFAULT_PEER_CONNECTION_CONFIG: PeerConnectionConfig = {
     },
   ],
   iceTransportPolicy: 'all',
+  // Security-focused defaults (Task 14.1, Requirement 12.1)
+  bundlePolicy: 'max-bundle', // Bundle all media on single transport for better security
+  rtcpMuxPolicy: 'require', // Multiplex RTP and RTCP for security
 };

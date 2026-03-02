@@ -13,13 +13,20 @@ import {
 
 /**
  * Configuration for SignalingClient
+ * 
+ * Task 14.3, Requirement 12.2: TLS encryption for signaling
+ * Task 14.7, Requirement 12.4: Participant authentication
  */
 export interface SignalingClientConfig {
-  serverUrl: string;
+  serverUrl: string; // Should use wss:// for secure WebSocket (Requirement 12.2)
   participantId: string;
   participantName: string;
   reconnectIntervalMs?: number; // default: 3000
   maxReconnectAttempts?: number; // default: 10
+  // Enforce secure WebSocket (wss://) - reject ws:// connections (Requirement 12.2)
+  enforceSecureConnection?: boolean; // default: true in production
+  // Authentication token (Requirement 12.4)
+  authToken?: string;
 }
 
 /**
@@ -68,19 +75,39 @@ export class SignalingClient {
     this.config = {
       reconnectIntervalMs: 3000,
       maxReconnectAttempts: 10,
+      enforceSecureConnection: true, // Default to enforcing secure connections (Requirement 12.2)
       ...config,
     };
   }
 
   /**
    * Connect to the signaling server
-   * Requirement 10.1, 10.6
+   * Requirement 10.1, 10.6, 12.2
+   * 
+   * Task 14.3: Enforces secure WebSocket (wss://) connections when configured
    */
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.connectionState === ConnectionState.CONNECTED) {
         resolve();
         return;
+      }
+
+      // Enforce secure WebSocket connection (Requirement 12.2)
+      if (this.config.enforceSecureConnection && !this.config.serverUrl.startsWith('wss://')) {
+        reject(new Error(
+          'Secure connection is enforced but server URL does not use wss://. ' +
+          'Set enforceSecureConnection: false only for development/testing.'
+        ));
+        return;
+      }
+
+      // Warn if using insecure connection
+      if (!this.config.serverUrl.startsWith('wss://')) {
+        console.warn(
+          'WARNING: Connecting to signaling server WITHOUT TLS encryption (ws://). ' +
+          'This should only be used for development/testing!'
+        );
       }
 
       this.setConnectionState(ConnectionState.CONNECTING);
@@ -292,6 +319,47 @@ export class SignalingClient {
   }
 
   /**
+   * Check if using secure WebSocket connection (Task 14.3)
+   * 
+   * @returns True if using wss:// (TLS encrypted)
+   * 
+   * Requirement 12.2: All signaling messages must be encrypted using TLS
+   */
+  isSecureConnection(): boolean {
+    return this.config.serverUrl.startsWith('wss://');
+  }
+
+  /**
+   * Get connection info (Task 14.3)
+   * Useful for monitoring and diagnostics
+   * 
+   * @returns Object with connection details
+   */
+  /**
+     * Get connection info (Task 14.3, 14.7)
+     * Useful for monitoring and diagnostics
+     * 
+     * @returns Object with connection details
+     */
+    getConnectionInfo(): {
+      serverUrl: string;
+      isSecure: boolean;
+      hasAuthToken: boolean;
+      connectionState: ConnectionState;
+      reconnectAttempts: number;
+      queuedMessages: number;
+    } {
+      return {
+        serverUrl: this.config.serverUrl,
+        isSecure: this.isSecureConnection(),
+        hasAuthToken: this.config.authToken !== undefined,
+        connectionState: this.connectionState,
+        reconnectAttempts: this.reconnectAttempts,
+        queuedMessages: this.messageQueue.length,
+      };
+    }
+
+  /**
    * Register handler for connection state changes
    */
   onConnectionStateChange(handler: (state: ConnectionState) => void): void {
@@ -351,7 +419,9 @@ export class SignalingClient {
 
   /**
    * Send join message to server
-   * Requirement 10.2
+   * Requirement 10.2, 12.4
+   * 
+   * Task 14.7: Includes authentication credentials
    */
   sendJoin(conferenceId: string): void {
     const message: JoinMessage = {
@@ -363,6 +433,11 @@ export class SignalingClient {
         id: this.config.participantId,
         name: this.config.participantName,
       },
+      // Include authentication if token is provided (Requirement 12.4)
+      auth: this.config.authToken ? {
+        token: this.config.authToken,
+        timestamp: Date.now(),
+      } : undefined,
     };
     this.sendMessage(message);
   }
@@ -458,4 +533,27 @@ export class SignalingClient {
     };
     this.sendMessage(message);
   }
+
+
+  /**
+   * Update authentication token (Task 14.7)
+   * Allows updating the token without recreating the client
+   *
+   * @param token - New authentication token
+   *
+   * Requirement 12.4: Authentication required before conference operations
+   */
+  setAuthToken(token: string): void {
+    this.config.authToken = token;
+  }
+
+  /**
+   * Check if client has authentication token (Task 14.7)
+   *
+   * @returns True if authentication token is set
+   */
+  hasAuthToken(): boolean {
+    return this.config.authToken !== undefined && this.config.authToken.length > 0;
+  }
+
 }
