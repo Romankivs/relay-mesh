@@ -5,3 +5,4 @@ export * from './topology-manager';
 export * from './media-handler';
 export * from './relay-engine';
 export * from './signaling-client';
+export * from './regular-node';
