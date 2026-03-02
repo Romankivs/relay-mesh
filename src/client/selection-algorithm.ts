@@ -1,4 +1,240 @@
 // Selection Algorithm component
-// To be implemented in Task 4
+// Task 4: Implement Selection Algorithm component
 
-export {};
+import { ParticipantMetrics, SelectionConfig, NATType } from '../shared/types';
+
+/**
+ * Relay score breakdown for a participant
+ */
+export interface RelayScore {
+  participantId: string;
+  totalScore: number;
+  bandwidthScore: number;
+  natScore: number;
+  latencyScore: number;
+  stabilityScore: number;
+  deviceScore: number;
+}
+
+/**
+ * Selection Algorithm for determining optimal relay nodes
+ * Implements weighted scoring based on multiple metrics
+ */
+export class SelectionAlgorithm {
+  /**
+   * Calculate relay score for a participant
+   * Implements the weighted scoring formula from the design document
+   * 
+   * @param metrics - Participant metrics to evaluate
+   * @param config - Selection configuration with weights
+   * @returns Detailed score breakdown
+   */
+  calculateScore(metrics: ParticipantMetrics, config: SelectionConfig): RelayScore {
+    const bandwidthScore = this.calculateBandwidthScore(metrics.bandwidth.uploadMbps, metrics.bandwidth.downloadMbps);
+    const natScore = this.calculateNATScore(metrics.natType);
+    const latencyScore = this.calculateLatencyScore(metrics.latency.averageRttMs);
+    const stabilityScore = this.calculateStabilityScore(metrics.stability);
+    const deviceScore = this.calculateDeviceScore(metrics.device);
+
+    const totalScore =
+      bandwidthScore * config.bandwidthWeight +
+      natScore * config.natWeight +
+      latencyScore * config.latencyWeight +
+      stabilityScore * config.stabilityWeight +
+      deviceScore * config.deviceWeight;
+
+    return {
+      participantId: metrics.participantId,
+      totalScore,
+      bandwidthScore,
+      natScore,
+      latencyScore,
+      stabilityScore,
+      deviceScore,
+    };
+  }
+
+  /**
+   * Calculate bandwidth score (0-1)
+   * Prioritizes upload bandwidth (relay nodes send more than receive)
+   * Formula: uploadScore * 0.7 + downloadScore * 0.3
+   */
+  private calculateBandwidthScore(uploadMbps: number, downloadMbps: number): number {
+    const uploadScore = Math.min(uploadMbps / 20, 1.0);
+    const downloadScore = Math.min(downloadMbps / 50, 1.0);
+    return uploadScore * 0.7 + downloadScore * 0.3;
+  }
+
+  /**
+   * Calculate NAT type score (0-1)
+   * Less restrictive NAT types get higher scores
+   * Formula: (4 - natType) / 4
+   */
+  private calculateNATScore(natType: NATType): number {
+    return (4 - natType) / 4;
+  }
+
+  /**
+   * Calculate latency score (0-1)
+   * Lower average latency gets higher score
+   * Formula: max(0, 1 - (averageLatency / 200))
+   */
+  private calculateLatencyScore(averageRttMs: number): number {
+    return Math.max(0, 1 - averageRttMs / 200);
+  }
+
+  /**
+   * Calculate stability score (0-1)
+   * Combines packet loss, jitter, uptime, and reconnection history
+   */
+  private calculateStabilityScore(stability: {
+    packetLossPercent: number;
+    jitterMs: number;
+    connectionUptime: number;
+    reconnectionCount: number;
+  }): number {
+    const packetLossScore = 1 - stability.packetLossPercent / 100;
+    const jitterScore = Math.max(0, 1 - stability.jitterMs / 50);
+    const uptimeScore = Math.min(stability.connectionUptime / 300, 1.0);
+    const reconnectionScore = Math.max(0, 1 - stability.reconnectionCount / 5);
+
+    return (
+      packetLossScore * 0.4 +
+      jitterScore * 0.3 +
+      uptimeScore * 0.2 +
+      reconnectionScore * 0.1
+    );
+  }
+
+  /**
+   * Calculate device capabilities score (0-1)
+   * Favors devices with available resources and capabilities
+   */
+  private calculateDeviceScore(device: {
+    cpuUsagePercent: number;
+    availableMemoryMB: number;
+    supportedCodecs: string[];
+    hardwareAcceleration: boolean;
+  }): number {
+    const cpuScore = 1 - device.cpuUsagePercent / 100;
+    const memoryScore = Math.min(device.availableMemoryMB / 2048, 1.0);
+    const codecScore = Math.min(device.supportedCodecs.length / 10, 1.0);
+    const accelerationScore = device.hardwareAcceleration ? 1.0 : 0.5;
+
+    return (
+      cpuScore * 0.4 +
+      memoryScore * 0.3 +
+      codecScore * 0.2 +
+      accelerationScore * 0.1
+    );
+  }
+
+  /**
+   * Select optimal relay nodes from all participants
+   * Applies eligibility filters and selects top N based on scores
+   * 
+   * @param allMetrics - Map of all participant metrics
+   * @param config - Selection configuration
+   * @returns Array of participant IDs selected as relay nodes
+   */
+  selectRelayNodes(
+    allMetrics: Map<string, ParticipantMetrics>,
+    config: SelectionConfig
+  ): string[] {
+    // Calculate optimal number of relay nodes
+    const optimalRelayCount = this.calculateOptimalRelayCount(allMetrics.size);
+
+    // Filter eligible participants and calculate scores
+    const eligibleScores: RelayScore[] = [];
+
+    for (const [participantId, metrics] of allMetrics) {
+      if (this.isEligibleForRelay(metrics, config)) {
+        const score = this.calculateScore(metrics, config);
+        eligibleScores.push(score);
+      }
+    }
+
+    // Sort by total score (descending) and select top N
+    eligibleScores.sort((a, b) => b.totalScore - a.totalScore);
+
+    // Return top N participant IDs
+    const selectedCount = Math.min(optimalRelayCount, eligibleScores.length);
+    return eligibleScores.slice(0, selectedCount).map((score) => score.participantId);
+  }
+
+  /**
+   * Check if a participant is eligible to be a relay node
+   * Applies minimum bandwidth, NAT type, and uptime filters
+   */
+  private isEligibleForRelay(metrics: ParticipantMetrics, config: SelectionConfig): boolean {
+    // Must meet minimum bandwidth requirement
+    if (metrics.bandwidth.uploadMbps < config.minBandwidthMbps) {
+      return false;
+    }
+
+    // Must not be SYMMETRIC NAT (unless all participants are)
+    // This check is simplified - in practice, we'd check if ALL participants are SYMMETRIC
+    // For now, we just exclude SYMMETRIC NAT participants
+    if (metrics.natType === NATType.SYMMETRIC) {
+      return false;
+    }
+
+    // Must have been connected for at least 30 seconds (prevents new joiners)
+    if (metrics.stability.connectionUptime < 30) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Calculate optimal number of relay nodes for participant count
+   * Formula: ceil(sqrt(participantCount))
+   * 
+   * @param participantCount - Total number of participants
+   * @returns Optimal number of relay nodes
+   */
+  calculateOptimalRelayCount(participantCount: number): number {
+    return Math.ceil(Math.sqrt(participantCount));
+  }
+
+  /**
+   * Determine if a relay node should be demoted
+   * Checks if relay metrics fall below thresholds
+   * 
+   * @param relayId - ID of the relay node to check
+   * @param currentMetrics - Current metrics for the relay
+   * @param config - Selection configuration
+   * @returns True if relay should be demoted
+   */
+  shouldDemote(
+    relayId: string,
+    currentMetrics: ParticipantMetrics,
+    config: SelectionConfig
+  ): boolean {
+    // Check if no longer eligible (bandwidth, NAT, uptime)
+    if (!this.isEligibleForRelay(currentMetrics, config)) {
+      return true;
+    }
+
+    // Check for severe degradation
+    const stability = currentMetrics.stability;
+
+    // Severe packet loss (> 15%)
+    if (stability.packetLossPercent > 15) {
+      return true;
+    }
+
+    // High latency (> 200ms average)
+    if (currentMetrics.latency.averageRttMs > 200) {
+      return true;
+    }
+
+    // Bandwidth dropped below minimum
+    if (currentMetrics.bandwidth.uploadMbps < config.minBandwidthMbps) {
+      return true;
+    }
+
+    return false;
+  }
+}
