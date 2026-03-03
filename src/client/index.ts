@@ -8,3 +8,6 @@ export * from './relay-engine';
 export * from './signaling-client';
 export * from './regular-node';
 export * from './relay-monitor';
+export * from './network-adapter';
+export * from './connection-optimizer';
+export * from './relay-scaler';

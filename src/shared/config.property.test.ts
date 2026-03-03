@@ -350,7 +350,7 @@ describe('Property 37: Configuration Application', () => {
             minBandwidthMbps: fc.integer({ min: 3, max: 15 }),
             maxParticipantsPerRelay: fc.integer({ min: 3, max: 10 }),
             reevaluationIntervalMs: fc.integer({ min: 10000, max: 120000 }),
-            bandwidthWeight: fc.float({ min: Math.fround(0.2), max: Math.fround(0.4) }),
+            bandwidthWeight: fc.float({ min: Math.fround(0.2), max: Math.fround(0.4), noNaN: true }),
           }),
           (customValues) => {
             // Calculate other weights to sum to 1.0
