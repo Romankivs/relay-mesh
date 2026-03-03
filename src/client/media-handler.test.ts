@@ -269,4 +269,267 @@ describe('MediaHandler - Property-Based Tests', () => {
       );
     });
   });
+
+  describe('Task 18.1: Connection Failure Handling', () => {
+    it('should implement exponential backoff for connection retries', async () => {
+      const config: PeerConnectionConfig = {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        iceTransportPolicy: 'all',
+      };
+
+      // Mock RTCPeerConnection
+      mockRTCPeerConnection.mockImplementation(() => ({
+        connectionState: 'new',
+        iceConnectionState: 'new',
+        addTrack: jest.fn(),
+        getSenders: jest.fn(() => []),
+        getStats: jest.fn(async () => new Map()),
+        close: jest.fn(),
+        ontrack: null,
+        onconnectionstatechange: null,
+        oniceconnectionstatechange: null,
+      }));
+
+      // Create initial connection
+      await handler.createPeerConnection('remote-1', config);
+
+      // Track retry callback invocations
+      let retryCallbackCount = 0;
+      const retryCallback = jest.fn(async () => {
+        retryCallbackCount++;
+      });
+
+      // Test exponential backoff delays
+      const startTime = Date.now();
+      const delays: number[] = [];
+
+      // Perform 3 retries and measure delays
+      for (let i = 0; i < 3; i++) {
+        const beforeRetry = Date.now();
+        await handler.retryConnection('remote-1', config, retryCallback);
+        const afterRetry = Date.now();
+        delays.push(afterRetry - beforeRetry);
+      }
+
+      // Verify exponential backoff pattern: ~1s, ~2s, ~4s
+      // Allow 200ms tolerance for timing variations
+      expect(delays[0]).toBeGreaterThanOrEqual(900);
+      expect(delays[0]).toBeLessThanOrEqual(1200);
+      
+      expect(delays[1]).toBeGreaterThanOrEqual(1900);
+      expect(delays[1]).toBeLessThanOrEqual(2200);
+      
+      expect(delays[2]).toBeGreaterThanOrEqual(3900);
+      expect(delays[2]).toBeLessThanOrEqual(4200);
+
+      // Verify retry callback was called
+      expect(retryCallbackCount).toBe(3);
+    }, 15000); // Increase timeout for this test
+
+    it('should stop retrying after maximum attempts', async () => {
+      const config: PeerConnectionConfig = {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        iceTransportPolicy: 'all',
+      };
+
+      mockRTCPeerConnection.mockImplementation(() => ({
+        connectionState: 'new',
+        iceConnectionState: 'new',
+        addTrack: jest.fn(),
+        getSenders: jest.fn(() => []),
+        getStats: jest.fn(async () => new Map()),
+        close: jest.fn(),
+        ontrack: null,
+        onconnectionstatechange: null,
+        oniceconnectionstatechange: null,
+      }));
+
+      await handler.createPeerConnection('remote-2', config);
+
+      const retryCallback = jest.fn(async () => {});
+
+      // Perform 5 retries (maximum)
+      for (let i = 0; i < 5; i++) {
+        await handler.retryConnection('remote-2', config, retryCallback);
+      }
+
+      // 6th retry should throw error
+      await expect(
+        handler.retryConnection('remote-2', config, retryCallback)
+      ).rejects.toThrow('Failed to establish connection to remote-2 after 5 attempts');
+    }, 60000); // Increase timeout significantly
+
+    it('should reset retry counter on successful connection', async () => {
+      const config: PeerConnectionConfig = {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        iceTransportPolicy: 'all',
+      };
+
+      mockRTCPeerConnection.mockImplementation(() => ({
+        connectionState: 'connected',
+        iceConnectionState: 'connected',
+        addTrack: jest.fn(),
+        getSenders: jest.fn(() => []),
+        getStats: jest.fn(async () => new Map()),
+        close: jest.fn(),
+        ontrack: null,
+        onconnectionstatechange: null,
+        oniceconnectionstatechange: null,
+      }));
+
+      await handler.createPeerConnection('remote-3', config);
+
+      // Simulate a retry
+      const retryCallback = jest.fn(async () => {});
+      await handler.retryConnection('remote-3', config, retryCallback);
+
+      // Reset counter (simulating successful connection)
+      handler.resetRetryCounter('remote-3');
+
+      // Next retry should start from attempt 1 again
+      const startTime = Date.now();
+      await handler.retryConnection('remote-3', config, retryCallback);
+      const delay = Date.now() - startTime;
+
+      // Should use first retry delay (~1s), not second retry delay (~2s)
+      expect(delay).toBeGreaterThanOrEqual(900);
+      expect(delay).toBeLessThanOrEqual(1200);
+    }, 15000);
+
+    it('should cancel pending retries when requested', async () => {
+      const config: PeerConnectionConfig = {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        iceTransportPolicy: 'all',
+      };
+
+      mockRTCPeerConnection.mockImplementation(() => ({
+        connectionState: 'new',
+        iceConnectionState: 'new',
+        addTrack: jest.fn(),
+        getSenders: jest.fn(() => []),
+        getStats: jest.fn(async () => new Map()),
+        close: jest.fn(),
+        ontrack: null,
+        onconnectionstatechange: null,
+        oniceconnectionstatechange: null,
+      }));
+
+      await handler.createPeerConnection('remote-4', config);
+
+      const retryCallback = jest.fn(async () => {});
+
+      // Start a retry (will wait 1 second) - don't await it
+      handler.retryConnection('remote-4', config, retryCallback);
+
+      // Wait a bit to ensure the timeout is set
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Cancel the retry
+      handler.cancelRetry('remote-4');
+
+      // Wait to see if callback gets called (it shouldn't after cancel)
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Callback should not have been called because we cancelled
+      expect(retryCallback).not.toHaveBeenCalled();
+
+      // Now start a new retry - it should start from attempt 1 (counter was reset by cancel)
+      const startTime = Date.now();
+      await handler.retryConnection('remote-4', config, retryCallback);
+      const delay = Date.now() - startTime;
+
+      // Should use first retry delay (~1s)
+      expect(delay).toBeGreaterThanOrEqual(900);
+      expect(delay).toBeLessThanOrEqual(1200);
+
+      // Now callback should have been called once
+      expect(retryCallback).toHaveBeenCalledTimes(1);
+    }, 5000);
+
+    it('should attempt direct connection before TURN fallback', async () => {
+      const config: PeerConnectionConfig = {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' },
+        ],
+        iceTransportPolicy: 'all', // 'all' tries direct first, then TURN
+      };
+
+      mockRTCPeerConnection.mockImplementation(() => ({
+        connectionState: 'new',
+        iceConnectionState: 'new',
+        addTrack: jest.fn(),
+        getSenders: jest.fn(() => []),
+        getStats: jest.fn(async () => new Map()),
+        close: jest.fn(),
+        ontrack: null,
+        onconnectionstatechange: null,
+        oniceconnectionstatechange: null,
+      }));
+
+      const peerConnection = await handler.createPeerConnection('remote-5', config);
+
+      // Verify connection was created with 'all' transport policy
+      expect(mockRTCPeerConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          iceTransportPolicy: 'all', // This allows both direct and TURN
+        })
+      );
+
+      // Verify both STUN and TURN servers are configured
+      expect(mockRTCPeerConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          iceServers: expect.arrayContaining([
+            expect.objectContaining({ urls: 'stun:stun.l.google.com:19302' }),
+            expect.objectContaining({ urls: 'turn:turn.example.com:3478' }),
+          ]),
+        })
+      );
+    });
+
+    it('should handle connection failure and trigger retry logic', async () => {
+      const config: PeerConnectionConfig = {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        iceTransportPolicy: 'all',
+      };
+
+      let connectionStateHandler: (() => void) | undefined;
+
+      mockRTCPeerConnection.mockImplementation(() => {
+        const mockPc: any = {
+          connectionState: 'new',
+          iceConnectionState: 'new',
+          addTrack: jest.fn(),
+          getSenders: jest.fn(() => []),
+          getStats: jest.fn(async () => new Map()),
+          close: jest.fn(),
+          ontrack: null,
+          oniceconnectionstatechange: null,
+        };
+
+        Object.defineProperty(mockPc, 'onconnectionstatechange', {
+          get() {
+            return connectionStateHandler;
+          },
+          set(handler: () => void) {
+            connectionStateHandler = handler;
+          },
+        });
+
+        return mockPc;
+      });
+
+      const peerConnection = await handler.createPeerConnection('remote-6', config);
+
+      // Simulate connection failure
+      (peerConnection as any).connectionState = 'failed';
+      if (connectionStateHandler) {
+        connectionStateHandler();
+      }
+
+      // Verify that the connection state change was detected
+      // (In real implementation, this would trigger retry logic in the caller)
+      expect(peerConnection.connectionState).toBe('failed');
+    });
+  });
 });

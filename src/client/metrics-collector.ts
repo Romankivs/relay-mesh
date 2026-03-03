@@ -91,93 +91,108 @@ export class MetricsCollector {
    * Task 3.1
    */
   async measureBandwidth(): Promise<BandwidthMetrics> {
-    // Create a test peer connection for bandwidth measurement
-    const pc = new RTCPeerConnection({
-      iceServers: this.stunServers.map(url => ({ urls: url })),
-    });
+      try {
+        // Create a test peer connection for bandwidth measurement
+        const pc = new RTCPeerConnection({
+          iceServers: this.stunServers.map(url => ({ urls: url })),
+        });
 
-    try {
-      // Create a data channel for testing
-      const dataChannel = pc.createDataChannel('bandwidth-test', {
-        ordered: false,
-        maxRetransmits: 0,
-      });
+        try {
+          // Create a data channel for testing
+          const dataChannel = pc.createDataChannel('bandwidth-test', {
+            ordered: false,
+            maxRetransmits: 0,
+          });
 
-      let uploadBytes = 0;
-      let downloadBytes = 0;
-      let uploadStartTime = 0;
-      let downloadStartTime = 0;
+          let uploadBytes = 0;
+          let downloadBytes = 0;
+          let uploadStartTime = 0;
+          let downloadStartTime = 0;
 
-      // Set up data channel handlers
-      dataChannel.onopen = () => {
-        uploadStartTime = Date.now();
-        
-        // Send test packets
-        const testData = new ArrayBuffer(this.bandwidthTestPacketSize);
-        const sendInterval = setInterval(() => {
-          if (dataChannel.readyState === 'open') {
-            try {
-              dataChannel.send(testData);
-              uploadBytes += this.bandwidthTestPacketSize;
-            } catch (e) {
+          // Set up data channel handlers
+          dataChannel.onopen = () => {
+            uploadStartTime = Date.now();
+
+            // Send test packets
+            const testData = new ArrayBuffer(this.bandwidthTestPacketSize);
+            const sendInterval = setInterval(() => {
+              if (dataChannel.readyState === 'open') {
+                try {
+                  dataChannel.send(testData);
+                  uploadBytes += this.bandwidthTestPacketSize;
+                } catch (e) {
+                  clearInterval(sendInterval);
+                }
+              }
+            }, 10);
+
+            // Stop after test duration
+            setTimeout(() => {
               clearInterval(sendInterval);
+              dataChannel.close();
+            }, this.bandwidthTestDurationMs);
+          };
+
+          dataChannel.onmessage = (event) => {
+            if (downloadStartTime === 0) {
+              downloadStartTime = Date.now();
             }
-          }
-        }, 10);
+            downloadBytes += event.data.byteLength || event.data.length || 0;
+          };
 
-        // Stop after test duration
-        setTimeout(() => {
-          clearInterval(sendInterval);
-          dataChannel.close();
-        }, this.bandwidthTestDurationMs);
-      };
+          // Create offer and set local description
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
 
-      dataChannel.onmessage = (event) => {
-        if (downloadStartTime === 0) {
-          downloadStartTime = Date.now();
+          // Wait for test to complete
+          await new Promise(resolve => setTimeout(resolve, this.bandwidthTestDurationMs + 500));
+
+          // Calculate bandwidth in Mbps
+          const uploadDurationSec = (Date.now() - uploadStartTime) / 1000;
+          const downloadDurationSec = downloadStartTime > 0 
+            ? (Date.now() - downloadStartTime) / 1000 
+            : uploadDurationSec;
+
+          const uploadMbps = uploadDurationSec > 0 
+            ? (uploadBytes * 8) / (uploadDurationSec * 1000000) 
+            : 0;
+          const downloadMbps = downloadDurationSec > 0 
+            ? (downloadBytes * 8) / (downloadDurationSec * 1000000) 
+            : 0;
+
+          // Confidence based on whether we got bidirectional data
+          const measurementConfidence = downloadBytes > 0 ? 0.8 : 0.5;
+
+          return {
+            uploadMbps: Math.max(0, uploadMbps),
+            downloadMbps: Math.max(0, downloadMbps),
+            measurementConfidence,
+          };
+        } finally {
+          pc.close();
         }
-        downloadBytes += event.data.byteLength || event.data.length || 0;
-      };
+      } catch (error) {
+        console.warn('Bandwidth measurement failed, using fallback values:', error);
 
-      // Create offer and set local description
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+        // Task 18.4: Use last known value if available
+        if (this.currentMetrics?.bandwidth) {
+          console.log('Using last known bandwidth values');
+          return {
+            ...this.currentMetrics.bandwidth,
+            measurementConfidence: 0.3, // Lower confidence for stale data
+          };
+        }
 
-      // Wait for test to complete
-      await new Promise(resolve => setTimeout(resolve, this.bandwidthTestDurationMs + 500));
-
-      // Calculate bandwidth in Mbps
-      const uploadDurationSec = (Date.now() - uploadStartTime) / 1000;
-      const downloadDurationSec = downloadStartTime > 0 
-        ? (Date.now() - downloadStartTime) / 1000 
-        : uploadDurationSec;
-
-      const uploadMbps = uploadDurationSec > 0 
-        ? (uploadBytes * 8) / (uploadDurationSec * 1000000) 
-        : 0;
-      const downloadMbps = downloadDurationSec > 0 
-        ? (downloadBytes * 8) / (downloadDurationSec * 1000000) 
-        : 0;
-
-      // Confidence based on whether we got bidirectional data
-      const measurementConfidence = downloadBytes > 0 ? 0.8 : 0.5;
-
-      return {
-        uploadMbps: Math.max(0, uploadMbps),
-        downloadMbps: Math.max(0, downloadMbps),
-        measurementConfidence,
-      };
-    } catch (error) {
-      // Return fallback values on error
-      return {
-        uploadMbps: 1.0,
-        downloadMbps: 5.0,
-        measurementConfidence: 0.1,
-      };
-    } finally {
-      pc.close();
+        // Task 18.4: Use conservative default values (Requirement 2.1)
+        // 5 Mbps upload, 10 Mbps download as specified in design document
+        console.log('Using conservative default bandwidth values');
+        return {
+          uploadMbps: 5.0,
+          downloadMbps: 10.0,
+          measurementConfidence: 0.1, // Very low confidence for defaults
+        };
+      }
     }
-  }
 
   /**
    * Collect all metrics
@@ -230,32 +245,41 @@ export class MetricsCollector {
    * - SYMMETRIC: Most restrictive, requires TURN
    */
   async detectNATType(): Promise<NATType> {
-    try {
-      // Create peer connection with STUN servers
-      const pc = new RTCPeerConnection({
-        iceServers: this.stunServers.map(url => ({ urls: url })),
-      });
+      try {
+        // Create peer connection with STUN servers
+        const pc = new RTCPeerConnection({
+          iceServers: this.stunServers.map(url => ({ urls: url })),
+        });
 
-      // Create a data channel to trigger ICE gathering
-      pc.createDataChannel('nat-detection');
+        // Create a data channel to trigger ICE gathering
+        pc.createDataChannel('nat-detection');
 
-      // Create offer to start ICE gathering
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+        // Create offer to start ICE gathering
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
 
-      // Wait for ICE gathering to complete
-      const candidates = await this.gatherICECandidates(pc);
+        // Wait for ICE gathering to complete
+        const candidates = await this.gatherICECandidates(pc);
 
-      pc.close();
+        pc.close();
 
-      // Analyze candidates to determine NAT type
-      return this.analyzeNATType(candidates);
-    } catch (error) {
-      console.error('NAT type detection failed:', error);
-      // Default to most restrictive on error
-      return NATType.SYMMETRIC;
+        // Analyze candidates to determine NAT type
+        return this.analyzeNATType(candidates);
+      } catch (error) {
+        console.warn('NAT type detection failed, using fallback:', error);
+
+        // Task 18.4: Use last known value if available
+        if (this.currentMetrics?.natType !== undefined) {
+          console.log('Using last known NAT type');
+          return this.currentMetrics.natType;
+        }
+
+        // Task 18.4: Assume SYMMETRIC NAT (most restrictive) on error (Requirement 2.2)
+        // This ensures participant won't be eligible for relay role if NAT detection fails
+        console.log('Assuming SYMMETRIC NAT (most restrictive) as fallback');
+        return NATType.SYMMETRIC;
+      }
     }
-  }
 
   /**
    * Gather ICE candidates from peer connection

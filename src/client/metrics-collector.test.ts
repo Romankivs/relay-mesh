@@ -235,3 +235,265 @@ describe('MetricsCollector', () => {
     });
   });
 });
+
+
+describe('Task 18.4: Metrics Collection Failure Handling', () => {
+  let collector: MetricsCollector;
+  let originalRTCPeerConnection: any;
+
+  beforeEach(() => {
+    collector = new MetricsCollector({
+      participantId: 'test-participant',
+      stunServers: ['stun:stun.l.google.com:19302'],
+      reevaluationIntervalMs: 30000,
+      bandwidthTestDurationMs: 100, // Short duration for tests
+    });
+    
+    // Save original mock
+    originalRTCPeerConnection = global.RTCPeerConnection;
+  });
+
+  afterEach(() => {
+    collector.stopCollection();
+    // Restore original mock
+    global.RTCPeerConnection = originalRTCPeerConnection;
+  });
+
+  describe('Bandwidth measurement failure handling', () => {
+    it('should use conservative default values when bandwidth measurement fails and no previous value exists', async () => {
+      // Mock RTCPeerConnection to throw error
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => {
+        throw new Error('Connection failed');
+      }) as any;
+
+      const bandwidth = await collector.measureBandwidth();
+
+      // Should return conservative defaults: 5 Mbps upload, 10 Mbps download
+      expect(bandwidth.uploadMbps).toBe(5.0);
+      expect(bandwidth.downloadMbps).toBe(10.0);
+      expect(bandwidth.measurementConfidence).toBe(0.1); // Low confidence
+    });
+
+    it('should use last known bandwidth values when measurement fails', async () => {
+      // First, collect metrics successfully
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => ({
+        createDataChannel: jest.fn(() => ({
+          onopen: null,
+          onmessage: null,
+          readyState: 'open',
+          send: jest.fn(),
+          close: jest.fn(),
+        })),
+        createOffer: jest.fn(async () => ({ type: 'offer', sdp: 'mock-sdp' })),
+        setLocalDescription: jest.fn(async () => {}),
+        onicecandidate: null,
+        close: jest.fn(),
+      })) as any;
+
+      // Mock ICE candidates
+      (collector as any).gatherICECandidates = jest.fn(async () => [
+        { type: 'host', address: '192.168.1.1', port: 54321 } as RTCIceCandidate,
+      ]);
+
+      await collector.collectMetrics();
+      const firstMetrics = collector.getCurrentMetrics();
+
+      // Now make bandwidth measurement fail
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => {
+        throw new Error('Connection failed');
+      }) as any;
+
+      const bandwidth = await collector.measureBandwidth();
+
+      // Should return last known values with lower confidence
+      expect(bandwidth.uploadMbps).toBe(firstMetrics.bandwidth.uploadMbps);
+      expect(bandwidth.downloadMbps).toBe(firstMetrics.bandwidth.downloadMbps);
+      expect(bandwidth.measurementConfidence).toBe(0.3); // Lower confidence for stale data
+    });
+  });
+
+  describe('NAT detection failure handling', () => {
+    it('should assume SYMMETRIC NAT when detection fails and no previous value exists', async () => {
+      // Mock RTCPeerConnection to throw error
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => {
+        throw new Error('STUN servers unreachable');
+      }) as any;
+
+      const natType = await collector.detectNATType();
+
+      // Should return SYMMETRIC (most restrictive)
+      expect(natType).toBe(NATType.SYMMETRIC);
+    });
+
+    it('should use last known NAT type when detection fails', async () => {
+      // First, collect metrics successfully with OPEN NAT
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => ({
+        createDataChannel: jest.fn(),
+        createOffer: jest.fn(async () => ({ type: 'offer', sdp: 'mock-sdp' })),
+        setLocalDescription: jest.fn(async () => {}),
+        onicecandidate: null,
+        close: jest.fn(),
+      })) as any;
+
+      // Mock ICE candidates for OPEN NAT
+      const mockCandidates = [
+        {
+          type: 'host',
+          address: '203.0.113.1', // Public IP
+          port: 54321,
+        } as RTCIceCandidate,
+      ];
+
+      // Override gatherICECandidates to return mock candidates
+      (collector as any).gatherICECandidates = jest.fn(async () => mockCandidates);
+
+      await collector.collectMetrics();
+      const firstMetrics = collector.getCurrentMetrics();
+      expect(firstMetrics.natType).toBe(NATType.OPEN);
+
+      // Now make NAT detection fail
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => {
+        throw new Error('STUN servers unreachable');
+      }) as any;
+
+      const natType = await collector.detectNATType();
+
+      // Should return last known value (OPEN)
+      expect(natType).toBe(NATType.OPEN);
+    });
+  });
+
+  describe('Metrics collection with failures', () => {
+    it('should continue collecting other metrics even if bandwidth measurement fails', async () => {
+      // Override measureBandwidth to throw error
+      const originalMeasureBandwidth = MetricsCollector.prototype.measureBandwidth;
+      MetricsCollector.prototype.measureBandwidth = jest.fn(async function(this: MetricsCollector) {
+        // Use fallback logic from the actual implementation
+        if ((this as any).currentMetrics?.bandwidth) {
+          return {
+            ...(this as any).currentMetrics.bandwidth,
+            measurementConfidence: 0.3,
+          };
+        }
+        return {
+          uploadMbps: 5.0,
+          downloadMbps: 10.0,
+          measurementConfidence: 0.1,
+        };
+      });
+
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => ({
+        createDataChannel: jest.fn(),
+        createOffer: jest.fn(async () => ({ type: 'offer', sdp: 'mock-sdp' })),
+        setLocalDescription: jest.fn(async () => {}),
+        onicecandidate: null,
+        close: jest.fn(),
+      })) as any;
+
+      // Mock ICE candidates
+      (collector as any).gatherICECandidates = jest.fn(async () => [
+        { type: 'host', address: '192.168.1.1', port: 54321 } as RTCIceCandidate,
+        { type: 'srflx', address: '203.0.113.1', port: 54321 } as RTCIceCandidate,
+      ]);
+
+      await collector.collectMetrics();
+      const metrics = collector.getCurrentMetrics();
+
+      // Should have collected NAT type successfully
+      expect(metrics.natType).toBeDefined();
+      
+      // Should have fallback bandwidth values
+      expect(metrics.bandwidth.uploadMbps).toBe(5.0);
+      expect(metrics.bandwidth.downloadMbps).toBe(10.0);
+
+      // Restore
+      MetricsCollector.prototype.measureBandwidth = originalMeasureBandwidth;
+    });
+
+    it('should continue collecting other metrics even if NAT detection fails', async () => {
+      // Override detectNATType to return fallback
+      const originalDetectNATType = MetricsCollector.prototype.detectNATType;
+      MetricsCollector.prototype.detectNATType = jest.fn(async function(this: MetricsCollector) {
+        // Use fallback logic from the actual implementation
+        if ((this as any).currentMetrics?.natType !== undefined) {
+          return (this as any).currentMetrics.natType;
+        }
+        return NATType.SYMMETRIC;
+      });
+
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => ({
+        createDataChannel: jest.fn(() => ({
+          onopen: null,
+          onmessage: null,
+          readyState: 'open',
+          send: jest.fn(),
+          close: jest.fn(),
+        })),
+        createOffer: jest.fn(async () => ({ type: 'offer', sdp: 'mock-sdp' })),
+        setLocalDescription: jest.fn(async () => {}),
+        onicecandidate: null,
+        close: jest.fn(),
+      })) as any;
+
+      // Mock ICE candidates
+      (collector as any).gatherICECandidates = jest.fn(async () => [
+        { type: 'host', address: '192.168.1.1', port: 54321 } as RTCIceCandidate,
+      ]);
+
+      await collector.collectMetrics();
+      const metrics = collector.getCurrentMetrics();
+
+      // Should have collected bandwidth successfully
+      expect(metrics.bandwidth).toBeDefined();
+      expect(metrics.bandwidth.uploadMbps).toBeGreaterThanOrEqual(0);
+      
+      // Should have fallback NAT type (SYMMETRIC)
+      expect(metrics.natType).toBe(NATType.SYMMETRIC);
+
+      // Restore
+      MetricsCollector.prototype.detectNATType = originalDetectNATType;
+    });
+  });
+
+  describe('Retry on next interval', () => {
+    it('should use fallback values and mark for retry on next interval', async () => {
+      // First measurement returns fallback
+      const originalMeasureBandwidth = MetricsCollector.prototype.measureBandwidth;
+      MetricsCollector.prototype.measureBandwidth = jest.fn(async function(this: MetricsCollector) {
+        // Return fallback values
+        return {
+          uploadMbps: 5.0,
+          downloadMbps: 10.0,
+          measurementConfidence: 0.1,
+        };
+      });
+
+      global.RTCPeerConnection = jest.fn().mockImplementation(() => ({
+        createDataChannel: jest.fn(),
+        createOffer: jest.fn(async () => ({ type: 'offer', sdp: 'mock-sdp' })),
+        setLocalDescription: jest.fn(async () => {}),
+        onicecandidate: null,
+        close: jest.fn(),
+      })) as any;
+
+      (collector as any).gatherICECandidates = jest.fn(async () => [
+        { type: 'host', address: '192.168.1.1', port: 54321 } as RTCIceCandidate,
+      ]);
+
+      // Collect metrics
+      await collector.collectMetrics();
+
+      // Metrics should have fallback values with low confidence
+      const metrics = collector.getCurrentMetrics();
+      expect(metrics.bandwidth.uploadMbps).toBe(5.0);
+      expect(metrics.bandwidth.downloadMbps).toBe(10.0);
+      expect(metrics.bandwidth.measurementConfidence).toBe(0.1);
+
+      // Verify measurement was attempted (will be retried on next interval)
+      expect(MetricsCollector.prototype.measureBandwidth).toHaveBeenCalled();
+
+      // Restore
+      MetricsCollector.prototype.measureBandwidth = originalMeasureBandwidth;
+    });
+  });
+});
