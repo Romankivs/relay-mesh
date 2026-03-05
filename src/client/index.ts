@@ -11,3 +11,5 @@ export * from './relay-monitor';
 export * from './network-adapter';
 export * from './connection-optimizer';
 export * from './relay-scaler';
+export * from './conference-state-machine';
+export * from './relay-mesh-client';

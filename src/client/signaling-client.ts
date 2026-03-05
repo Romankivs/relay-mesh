@@ -10,6 +10,7 @@ import {
   ConnectionTopology,
   ParticipantMetrics,
 } from '../shared/types';
+import { EventEmitter } from 'events';
 
 /**
  * Configuration for SignalingClient
@@ -51,7 +52,7 @@ type MessageHandler<T extends SignalingMessage> = (message: T) => void;
  * 
  * Requirements: 10.1, 10.6
  */
-export class SignalingClient {
+export class SignalingClient extends EventEmitter {
   private config: SignalingClientConfig;
   private ws: WebSocket | null = null;
   private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
@@ -72,6 +73,7 @@ export class SignalingClient {
   private connectionStateHandlers: Array<(state: ConnectionState) => void> = [];
 
   constructor(config: SignalingClientConfig) {
+    super();
     this.config = {
       reconnectIntervalMs: 3000,
       maxReconnectAttempts: 10,
@@ -121,6 +123,9 @@ export class SignalingClient {
           
           // Send queued messages
           this.flushMessageQueue();
+          
+          // Emit connected event
+          this.emit('connected');
           
           resolve();
         };
@@ -176,6 +181,9 @@ export class SignalingClient {
     }
 
     this.ws = null;
+    
+    // Emit disconnected event
+    this.emit('disconnected');
 
     // Attempt reconnection if within retry limit
     if (this.reconnectAttempts < (this.config.maxReconnectAttempts || 10)) {
@@ -230,6 +238,9 @@ export class SignalingClient {
   private handleMessage(data: string): void {
     try {
       const message = JSON.parse(data) as SignalingMessage;
+      
+      // Emit generic message event
+      this.emit('message', message);
 
       switch (message.type) {
         case 'join-response':
@@ -545,6 +556,18 @@ export class SignalingClient {
    */
   setAuthToken(token: string): void {
     this.config.authToken = token;
+  }
+
+  /**
+   * Send leave message to server
+   */
+  sendLeave(participantId: string): void {
+    const message: SignalingMessage = {
+      type: 'leave',
+      from: participantId,
+      timestamp: Date.now(),
+    };
+    this.sendMessage(message);
   }
 
   /**

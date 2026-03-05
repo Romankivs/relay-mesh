@@ -428,6 +428,23 @@ export class MediaHandler {
   }
 
   /**
+   * Close all peer connections
+   */
+  closeAllConnections(): void {
+    const participantIds = Array.from(this.peerConnections.keys());
+    for (const participantId of participantIds) {
+      this.closePeerConnection(participantId);
+    }
+  }
+
+  /**
+   * Get list of active connection participant IDs
+   */
+  getActiveConnections(): string[] {
+    return Array.from(this.peerConnections.keys());
+  }
+
+  /**
    * Set up event handlers for peer connection (Task 8.5, 18.1)
    * Handles remote streams and connection state changes
    * Implements connection failure detection and retry logic
