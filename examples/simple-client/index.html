@@ -229,11 +229,8 @@
     </div>
 
     <script type="module">
-        // TODO: This example requires a browser build of RelayMesh
-        // The current build outputs CommonJS modules which don't work in browsers
-        // Need to add webpack/rollup/esbuild to create a browser bundle
-        // For now, this will fail with a 404 error on /dist/index.js
-        import { RelayMeshClient } from '../../dist/index.js';
+        // Using the ES module browser bundle
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js';
 
         let client = null;
         let localStream = null;
@@ -293,6 +290,11 @@
                 elements.joinBtn.disabled = true;
                 log('Creating client...', 'info');
 
+                // Check if media devices are available
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('WebRTC is not supported in this browser');
+                }
+
                 client = new RelayMeshClient({
                     signalingServerUrl: elements.serverUrl.value,
                     participantName: elements.userName.value,
@@ -331,7 +333,27 @@
 
             } catch (error) {
                 log(`Error: ${error.message}`, 'error');
+                
+                // Provide helpful error messages
+                if (error.message.includes('Requested device not found')) {
+                    log('No camera/microphone found. Please connect a device and try again.', 'warning');
+                } else if (error.message.includes('Permission denied')) {
+                    log('Camera/microphone access denied. Please allow permissions and reload.', 'warning');
+                } else if (error.message.includes('device in use')) {
+                    log('Camera/microphone is being used by another application.', 'warning');
+                }
+                
                 elements.joinBtn.disabled = false;
+                
+                // Clean up client if it was created
+                if (client) {
+                    try {
+                        await client.leaveConference();
+                    } catch (e) {
+                        // Ignore cleanup errors
+                    }
+                    client = null;
+                }
             }
         });
 
@@ -361,6 +383,34 @@
         });
 
         log('Ready to join conference', 'success');
+
+        // Check for media devices on load
+        (async () => {
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    log('WebRTC not supported in this browser', 'error');
+                    elements.joinBtn.disabled = true;
+                    return;
+                }
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const hasVideo = devices.some(d => d.kind === 'videoinput');
+                const hasAudio = devices.some(d => d.kind === 'audioinput');
+
+                if (!hasVideo && !hasAudio) {
+                    log('No camera or microphone detected', 'warning');
+                    log('You can still join but won\'t be able to share media', 'info');
+                } else if (!hasVideo) {
+                    log('No camera detected - audio only mode', 'warning');
+                } else if (!hasAudio) {
+                    log('No microphone detected - video only mode', 'warning');
+                } else {
+                    log(`Detected ${devices.filter(d => d.kind === 'videoinput').length} camera(s) and ${devices.filter(d => d.kind === 'audioinput').length} microphone(s)`, 'info');
+                }
+            } catch (error) {
+                log('Could not check media devices', 'warning');
+            }
+        })();
     </script>
 </body>
 </html>

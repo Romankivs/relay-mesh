@@ -2,14 +2,6 @@
 
 A minimal web-based client demonstrating RelayMesh video conferencing.
 
-## ⚠️ Current Status
-
-**This example currently requires a browser build setup to work.** The project is built as CommonJS modules, but browsers need ES modules or a bundled script.
-
-**TODO:** Add a bundler (webpack/rollup/esbuild) to create a browser-compatible build, or provide a pre-built UMD bundle.
-
-For now, use the Node.js examples or the monitoring dashboard which uses a different approach.
-
 ## Features
 
 - Join/leave conferences
@@ -18,14 +10,19 @@ For now, use the Node.js examples or the monitoring dashboard which uses a diffe
 - Real-time event logging
 - Clean, responsive UI
 
-## Running the Example (When Build is Available)
+## Running the Example
 
-### 1. Build the Project
+### 1. Build the Browser Bundle
 
 ```bash
 # From the project root
-npm run build
+npm run build:browser
 ```
+
+This creates browser-compatible bundles in `dist/browser/`:
+- `relay-mesh.esm.js` - ES module (used by this example)
+- `relay-mesh.js` - IIFE bundle (for script tags)
+- `relay-mesh.min.js` - Minified IIFE bundle
 
 ### 2. Start the Signaling Server
 
@@ -37,14 +34,14 @@ node server.js
 
 The server will start on `ws://localhost:8080`
 
-### 3. Open the Client
+### 3. Serve and Open the Client
 
 ```bash
-# Serve the client (from project root)
-npx http-server examples/simple-client -p 3000
+# Serve from project root (so it can access dist/browser/)
+npx http-server . -p 3000
 ```
 
-Then open http://localhost:3000 in your browser.
+Then open http://localhost:3000/examples/simple-client/ in your browser.
 
 ### 3. Join a Conference
 
@@ -69,20 +66,48 @@ conferenceId: 'demo-conference'    // Default conference ID
 
 ## Troubleshooting
 
-**Camera/microphone not working:**
+### "Requested device not found" Error
+
+This error means no camera/microphone is available. Solutions:
+
+1. **Check if devices are connected**
+   - Ensure your camera/microphone is plugged in
+   - Check if the device appears in System Preferences/Settings
+
+2. **Check if another app is using the devices**
+   - Close other video conferencing apps (Zoom, Teams, etc.)
+   - Close other browser tabs using camera/microphone
+   - Restart your browser
+
+3. **Check browser permissions**
+   - Click the camera icon in the browser address bar
+   - Allow camera and microphone access
+   - Reload the page after granting permissions
+
+4. **Test your devices**
+   - Open your browser's settings and test camera/microphone
+   - Try a different browser to isolate the issue
+
+### Camera/microphone not working
+
 - Check browser permissions
 - Ensure HTTPS or localhost (required for WebRTC)
 - Try a different browser
+- Check if devices work in other applications
 
-**Can't connect to server:**
-- Verify server is running
-- Check server URL is correct
+### Can't connect to server
+
+- Verify server is running on the correct port
+- Check server URL is correct (ws://localhost:8080)
 - Check firewall settings
+- Look at browser console for connection errors
 
-**No remote video:**
-- Ensure multiple participants have joined
+### No remote video
+
+- Ensure multiple participants have joined the same conference
 - Check browser console for errors
 - Verify WebRTC connections are established
+- Check that both participants have working cameras
 
 ## Browser Support
 

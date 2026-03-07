@@ -33,8 +33,15 @@ npm install
 Build the project:
 
 ```bash
-npm run build
+npm run build          # Build Node.js/CommonJS version
+npm run build:browser  # Build browser bundles
+npm run build:all      # Build both
 ```
+
+The browser build creates three bundles in `dist/browser/`:
+- `relay-mesh.esm.js` - ES module for modern browsers
+- `relay-mesh.js` - IIFE bundle for script tags
+- `relay-mesh.min.js` - Minified IIFE bundle
 
 Run tests:
 
