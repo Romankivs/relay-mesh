@@ -64,6 +64,28 @@ userName: 'User'                   // Default participant name
 conferenceId: 'demo-conference'    // Default conference ID
 ```
 
+## Known Issues
+
+### Participant Count Shows 1
+
+When multiple participants join the same conference, the participant count may show as 1 for the first 2-3 seconds. This is because:
+
+1. Each client needs to collect metrics (bandwidth, NAT type, etc.)
+2. Bandwidth measurement takes ~2.5 seconds to complete
+3. Until metrics are collected, participants don't broadcast their presence
+4. The count updates automatically once metrics are exchanged
+
+**Workaround**: Wait 3-5 seconds after joining for the participant count to update. The UI refreshes automatically every second.
+
+**Future Fix**: This will be resolved by:
+- Making bandwidth measurement faster or async
+- Using fallback values immediately
+- Showing "pending" participants before metrics are ready
+
+### Role Shows "-" Initially
+
+The role may show as "-" briefly when joining. This is normal - it updates to "REGULAR" once the client is fully connected, and may change to "RELAY" if the participant is selected as a relay node.
+
 ## Troubleshooting
 
 ### "Requested device not found" Error

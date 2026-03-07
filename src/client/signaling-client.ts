@@ -482,6 +482,7 @@ export class SignalingClient extends EventEmitter {
       timestamp: Date.now(),
       metrics,
     };
+    console.log('[SignalingClient] Broadcasting metrics:', this.config.participantId);
     this.sendMessage(message);
   }
 

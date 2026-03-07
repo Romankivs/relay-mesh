@@ -308,6 +308,8 @@ export class SignalingServer {
     const { conferenceId, participantInfo } = message;
     const participantId = participantInfo.id;
 
+    console.log('[SignalingServer] Participant joining:', participantId, 'conference:', conferenceId);
+
     // Authenticate participant (Requirement 12.4)
     if (this.config.requireAuth) {
       if (!message.auth || !this.config.authProvider) {
@@ -354,6 +356,7 @@ export class SignalingServer {
     // Get or create conference
     let conference = this.conferences.get(conferenceId);
     if (!conference) {
+      console.log('[SignalingServer] Creating new conference:', conferenceId);
       conference = this.createConference(conferenceId);
       this.conferences.set(conferenceId, conference);
     }
@@ -368,6 +371,8 @@ export class SignalingServer {
       joinedAt: Date.now(),
       lastSeen: Date.now(),
     });
+
+    console.log('[SignalingServer] Conference', conferenceId, 'now has', conference.participants.size, 'participants');
 
     // Send current topology to joining participant
     const response = {
@@ -448,10 +453,19 @@ export class SignalingServer {
     const participant = this.participants.get(senderId);
     
     if (!participant) {
+      console.warn('[SignalingServer] Metrics broadcast from unknown participant:', senderId);
       return;
     }
 
+    console.log('[SignalingServer] Received metrics broadcast from:', senderId, 'in conference:', participant.conferenceId);
+    
     // Broadcast to all other participants in the conference
+    const conference = this.conferences.get(participant.conferenceId);
+    if (conference) {
+      const participantCount = conference.participants.size;
+      console.log('[SignalingServer] Broadcasting to', participantCount - 1, 'other participants');
+    }
+    
     this.broadcastToConference(participant.conferenceId, message, senderId);
   }
 
@@ -520,6 +534,7 @@ export class SignalingServer {
     message: SignalingMessage,
     excludeParticipantId?: string
   ): void {
+    let sentCount = 0;
     this.participants.forEach((participant) => {
       if (
         participant.conferenceId === conferenceId &&
@@ -527,8 +542,13 @@ export class SignalingServer {
         participant.ws.readyState === WebSocket.OPEN
       ) {
         participant.ws.send(JSON.stringify(message));
+        sentCount++;
       }
     });
+    
+    if (message.type === 'metrics-broadcast') {
+      console.log('[SignalingServer] Metrics broadcast sent to', sentCount, 'participants');
+    }
   }
 
   /**

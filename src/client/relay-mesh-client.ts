@@ -94,6 +94,9 @@ export class RelayMeshClient extends EventEmitter {
     await this.stateMachine.startJoin(conferenceId, participantId);
 
     try {
+      // Update signaling client with actual participant ID
+      this.signalingClient['config'].participantId = participantId;
+      
       // Initialize metrics collector with actual participant ID
       this.metricsCollector = new MetricsCollector({ participantId });
       
@@ -113,17 +116,17 @@ export class RelayMeshClient extends EventEmitter {
       // Connect to signaling server
       await this.signalingClient.connect();
 
-      // Start metrics collection
-      await this.metricsCollector.startCollection();
-
       // Initialize local media
       await this.mediaHandler.initializeLocalMedia({
         audio: true,
         video: true,
       });
 
-      // Send join message
+      // Send join message (register with server first)
       await this.signalingClient.sendJoin(conferenceId, participantId, this.config.participantName);
+
+      // Start metrics collection (after registration)
+      await this.metricsCollector.startCollection();
 
       // Wait for topology assignment and state transition to CONNECTED
       await this.waitForState(ConferenceState.CONNECTED, 10000);
@@ -241,12 +244,25 @@ export class RelayMeshClient extends EventEmitter {
 
   private async handleStateTransition(from: ConferenceState, to: ConferenceState): Promise<void> {
     if (to === ConferenceState.CONNECTED && this.metricsCollector) {
+      // Immediately broadcast current metrics if available
+      try {
+        const currentMetrics = this.metricsCollector.getCurrentMetrics();
+        console.log('[RelayMeshClient] Broadcasting metrics on CONNECTED:', currentMetrics.participantId);
+        this.signalingClient.broadcastMetrics(currentMetrics);
+      } catch (error) {
+        console.warn('[RelayMeshClient] Metrics not ready yet, will broadcast on next collection');
+      }
+      
       // Start periodic metrics updates
       const interval = this.config.selectionConfig?.reevaluationIntervalMs || 30000;
       this.metricsUpdateInterval = setInterval(() => {
         if (this.metricsCollector) {
-          const metrics = this.metricsCollector.getCurrentMetrics();
-          this.signalingClient.broadcastMetrics(metrics);
+          try {
+            const metrics = this.metricsCollector.getCurrentMetrics();
+            this.signalingClient.broadcastMetrics(metrics);
+          } catch (error) {
+            // Metrics not ready yet, skip this broadcast
+          }
         }
       }, interval);
     }
@@ -322,6 +338,7 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private handleMetricsBroadcast(message: MetricsBroadcastMessage): void {
+    console.log('[RelayMeshClient] Received metrics broadcast from:', message.from);
     this.allMetrics.set(message.from, message.metrics);
     this.evaluateTopology();
   }

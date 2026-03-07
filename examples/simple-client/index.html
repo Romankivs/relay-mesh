@@ -229,8 +229,8 @@
     </div>
 
     <script type="module">
-        // Using the ES module browser bundle
-        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js';
+        // Using the ES module browser bundle (with cache buster)
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=5';
 
         let client = null;
         let localStream = null;
@@ -257,9 +257,25 @@
         }
 
         function updateStatus(info) {
+            console.log('[updateStatus] called with:', info);
             if (info) {
                 elements.participantId.textContent = info.participantId || '-';
                 elements.participantCount.textContent = info.participantCount || 0;
+                elements.role.textContent = info.role ? info.role.toUpperCase() : '-';
+                elements.role.className = `status-value ${info.role || ''}`;
+                console.log('[updateStatus] Updated DOM - count:', info.participantCount);
+            }
+        }
+
+        function refreshStatus() {
+            if (client) {
+                const info = client.getConferenceInfo();
+                console.log('[Debug] getConferenceInfo returned:', info);
+                updateStatus(info);
+                
+                // Debug: Log metrics count
+                const metricsCount = client['allMetrics'] ? client['allMetrics'].size : 0;
+                console.log('[Debug] allMetrics.size:', metricsCount, 'participantCount:', info?.participantCount);
             }
         }
 
@@ -305,12 +321,14 @@
                 client.on('stateChange', (event) => {
                     elements.state.textContent = event.to;
                     log(`State changed: ${event.from} → ${event.to}`, 'info');
+                    refreshStatus();
                 });
 
                 client.on('roleChange', (role) => {
                     elements.role.textContent = role.toUpperCase();
                     elements.role.className = `status-value ${role}`;
                     log(`Role changed to: ${role}`, role === 'relay' ? 'warning' : 'info');
+                    refreshStatus();
                 });
 
                 client.on('remoteStream', (stream) => {
@@ -320,13 +338,61 @@
 
                 client.on('topologyUpdate', (topology) => {
                     log(`Topology updated: ${topology.relayNodes.length} relays`, 'info');
+                    refreshStatus();
                 });
 
+                // Debug: Monitor all client events
+                const originalEmit = client.emit.bind(client);
+                client.emit = function(event, ...args) {
+                    console.log('[Event]', event, args);
+                    if (event === 'topologyUpdate') {
+                        // Refresh status when topology updates
+                        setTimeout(refreshStatus, 100);
+                    }
+                    return originalEmit(event, ...args);
+                };
+                
+                // Debug: Monitor metrics collection
+                if (client['metricsCollector']) {
+                    const mc = client['metricsCollector'];
+                    const originalNotify = mc['notifySubscribers'].bind(mc);
+                    mc['notifySubscribers'] = function() {
+                        console.log('[MetricsCollector] Notifying subscribers, metrics:', mc['currentMetrics']);
+                        return originalNotify();
+                    };
+                }
+                
                 log('Joining conference...', 'info');
+                
+                // Debug: Monitor metrics broadcasts
+                let metricsReceived = 0;
+                const checkMetrics = setInterval(() => {
+                    const count = client['allMetrics'] ? client['allMetrics'].size : 0;
+                    if (count !== metricsReceived) {
+                        metricsReceived = count;
+                        log(`Metrics received from ${count} participant(s)`, 'info');
+                        console.log('[Debug] allMetrics:', Array.from(client['allMetrics'].keys()));
+                        // Trigger UI refresh when metrics count changes
+                        refreshStatus();
+                    }
+                }, 500);
+                
                 const info = await client.joinConference(elements.conferenceId.value);
                 
                 log(`Joined conference successfully!`, 'success');
-                updateStatus(info);
+                log('Collecting metrics... participant count will update in 3-5 seconds', 'info');
+                
+                // Initial status update
+                refreshStatus();
+                
+                // Set up periodic status refresh to catch metrics updates
+                const statusInterval = setInterval(() => {
+                    if (client && client.getCurrentState() === 'CONNECTED') {
+                        refreshStatus();
+                    } else {
+                        clearInterval(statusInterval);
+                    }
+                }, 1000);
                 
                 elements.joinBtn.disabled = true;
                 elements.leaveBtn.disabled = false;
