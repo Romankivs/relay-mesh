@@ -242,6 +242,16 @@ export class RelayMeshClient extends EventEmitter {
     };
   }
 
+  /**
+   * Get the local media stream
+   *
+   * @returns The local media stream or null if not initialized
+   */
+  getLocalStream(): globalThis.MediaStream | null {
+    return this.mediaHandler?.getLocalStream() || null;
+  }
+
+
   private async handleStateTransition(from: ConferenceState, to: ConferenceState): Promise<void> {
     if (to === ConferenceState.CONNECTED && this.metricsCollector) {
       // Immediately broadcast current metrics if available

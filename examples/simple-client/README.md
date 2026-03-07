@@ -5,6 +5,9 @@ A minimal web-based client demonstrating RelayMesh video conferencing.
 ## Features
 
 - Join/leave conferences
+- Real-time audio transmission and playback
+- Audio level monitoring with visual indicators
+- Mute/unmute microphone controls
 - Display local and remote video streams
 - Show participant role (relay or regular)
 - Real-time event logging
@@ -49,10 +52,15 @@ Then open http://localhost:3000/examples/simple-client/ in your browser.
 2. Enter a conference ID (e.g., "demo-conference")
 3. Click "Join Conference"
 4. Allow camera/microphone permissions when prompted
+5. Use the "Mute" button to toggle your microphone
+6. Monitor your audio level in the green indicator bar
 
 ### 4. Test with Multiple Participants
 
-Open the same URL in multiple browser tabs or windows to simulate multiple participants.
+Open the same URL in multiple browser tabs or windows to simulate multiple participants. You should:
+- See remote audio streams appear in the "Remote Audio Streams" section
+- Hear audio from other participants through the audio controls
+- See your local audio level indicator respond to your voice
 
 ## Configuration
 
@@ -87,6 +95,30 @@ When multiple participants join the same conference, the participant count may s
 The role may show as "-" briefly when joining. This is normal - it updates to "REGULAR" once the client is fully connected, and may change to "RELAY" if the participant is selected as a relay node.
 
 ## Troubleshooting
+
+### No audio from remote participants
+
+1. **Check audio elements**
+   - Look for audio controls in the "Remote Audio Streams" section
+   - Ensure the audio elements are not muted
+   - Try adjusting the volume slider on the audio controls
+
+2. **Check browser audio**
+   - Ensure your browser tab is not muted
+   - Check system volume settings
+   - Try playing audio from another source to verify speakers work
+
+3. **Check WebRTC connections**
+   - Open browser console and look for connection errors
+   - Verify that remote streams have audio tracks
+   - Check that both participants have working microphones
+
+### Audio level indicator not working
+
+- The audio level indicator requires the Web Audio API
+- Some browsers may block audio context until user interaction
+- Try clicking the mute button to initialize audio monitoring
+- Check browser console for audio context errors
 
 ### "Requested device not found" Error
 

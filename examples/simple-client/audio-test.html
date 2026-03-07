@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Level Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .audio-level {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+        }
+        
+        .audio-level-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #48bb78, #38a169);
+            transition: width 0.05s ease-out;
+            min-width: 2px;
+        }
+        
+        .stats {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            margin: 10px 0;
+        }
+        
+        .log {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Level Test</h1>
+    
+    <div class="test-section">
+        <h2>Microphone Test</h2>
+        <button id="startBtn">Start Microphone</button>
+        <button id="stopBtn" disabled>Stop Microphone</button>
+        
+        <div class="audio-level">
+            <div class="audio-level-bar" id="audioBar"></div>
+        </div>
+        
+        <div class="stats">
+            <div>RMS: <span id="rms">0.0000</span></div>
+            <div>Percentage: <span id="percentage">0.0</span>%</div>
+            <div>Peak: <span id="peak">0</span></div>
+            <div>Audio Context State: <span id="contextState">-</span></div>
+            <div>Stream Active: <span id="streamActive">-</span></div>
+            <div>Audio Tracks: <span id="trackCount">0</span></div>
+        </div>
+        
+        <div class="log" id="log"></div>
+    </div>
+    
+    <script>
+        let audioContext = null;
+        let analyser = null;
+        let stream = null;
+        let animationId = null;
+        
+        const elements = {
+            startBtn: document.getElementById('startBtn'),
+            stopBtn: document.getElementById('stopBtn'),
+            audioBar: document.getElementById('audioBar'),
+            rms: document.getElementById('rms'),
+            percentage: document.getElementById('percentage'),
+            peak: document.getElementById('peak'),
+            contextState: document.getElementById('contextState'),
+            streamActive: document.getElementById('streamActive'),
+            trackCount: document.getElementById('trackCount'),
+            log: document.getElementById('log')
+        };
+        
+        function log(message) {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            elements.log.insertBefore(entry, elements.log.firstChild);
+        }
+        
+        async function startMicrophone() {
+            try {
+                log('Requesting microphone access...');
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                const audioTracks = stream.getAudioTracks();
+                log(`Got stream with ${audioTracks.length} audio track(s)`);
+                log(`Track label: ${audioTracks[0]?.label || 'unknown'}`);
+                log(`Track enabled: ${audioTracks[0]?.enabled}`);
+                
+                elements.trackCount.textContent = audioTracks.length;
+                elements.streamActive.textContent = stream.active ? 'Yes' : 'No';
+                
+                // Create audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log(`Audio context created, state: ${audioContext.state}`);
+                elements.contextState.textContent = audioContext.state;
+                
+                // Resume context if suspended (browser autoplay policy)
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                    log(`Audio context resumed, state: ${audioContext.state}`);
+                    elements.contextState.textContent = audioContext.state;
+                }
+                
+                // Create analyser
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                analyser.smoothingTimeConstant = 0.8;
+                source.connect(analyser);
+                
+                log('Audio analyser connected');
+                log('Starting audio level monitoring...');
+                
+                // Start monitoring
+                monitorAudioLevel();
+                
+                elements.startBtn.disabled = true;
+                elements.stopBtn.disabled = false;
+                
+            } catch (error) {
+                log(`ERROR: ${error.message}`);
+                console.error(error);
+            }
+        }
+        
+        function monitorAudioLevel() {
+            const dataArray = new Uint8Array(analyser.fftSize);
+            
+            function update() {
+                if (!analyser) return;
+                
+                // Get time domain data
+                analyser.getByteTimeDomainData(dataArray);
+                
+                // Calculate RMS
+                let sum = 0;
+                let peak = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    const normalized = (dataArray[i] - 128) / 128;
+                    sum += normalized * normalized;
+                    peak = Math.max(peak, Math.abs(normalized));
+                }
+                const rms = Math.sqrt(sum / dataArray.length);
+                
+                // Convert to percentage
+                const percentage = Math.min(100, rms * 300);
+                
+                // Update UI
+                elements.audioBar.style.width = `${percentage}%`;
+                elements.rms.textContent = rms.toFixed(4);
+                elements.percentage.textContent = percentage.toFixed(1);
+                elements.peak.textContent = peak.toFixed(4);
+                
+                if (audioContext) {
+                    elements.contextState.textContent = audioContext.state;
+                }
+                if (stream) {
+                    elements.streamActive.textContent = stream.active ? 'Yes' : 'No';
+                }
+                
+                animationId = requestAnimationFrame(update);
+            }
+            
+            update();
+        }
+        
+        function stopMicrophone() {
+            log('Stopping microphone...');
+            
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            
+            if (stream) {
+                stream.getTracks().forEach(track => {
+                    track.stop();
+                    log(`Stopped track: ${track.label}`);
+                });
+                stream = null;
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                log('Audio context closed');
+                audioContext = null;
+            }
+            
+            analyser = null;
+            
+            elements.audioBar.style.width = '0%';
+            elements.rms.textContent = '0.0000';
+            elements.percentage.textContent = '0.0';
+            elements.peak.textContent = '0';
+            elements.contextState.textContent = '-';
+            elements.streamActive.textContent = '-';
+            elements.trackCount.textContent = '0';
+            
+            elements.startBtn.disabled = false;
+            elements.stopBtn.disabled = true;
+            
+            log('Microphone stopped');
+        }
+        
+        elements.startBtn.addEventListener('click', startMicrophone);
+        elements.stopBtn.addEventListener('click', stopMicrophone);
+        
+        log('Ready. Click "Start Microphone" to begin.');
+        log('Make sure to allow microphone permissions when prompted.');
+        log('Speak into your microphone to see the audio level bar move.');
+    </script>
+</body>
+</html>

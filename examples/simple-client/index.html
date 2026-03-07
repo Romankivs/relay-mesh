@@ -183,6 +183,63 @@
             background: #fffaf0;
             color: #c05621;
         }
+
+        .audio-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .audio-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+
+        .audio-level {
+            width: 100px;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+            border: 1px solid #ccc;
+        }
+
+        .audio-level-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #48bb78, #38a169);
+            transition: width 0.05s ease-out;
+            border-radius: 10px;
+            min-width: 2px;
+        }
+
+        .remote-audio {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+
+        .remote-audio audio {
+            flex: 1;
+        }
+
+        .mute-btn {
+            padding: 8px 16px;
+            background: #48bb78;
+            font-size: 12px;
+        }
+
+        .mute-btn.muted {
+            background: #e53e3e;
+        }
     </style>
 </head>
 <body>
@@ -195,6 +252,15 @@
                 <input type="text" id="conferenceId" placeholder="Conference ID" value="demo-conference">
                 <button id="joinBtn">Join Conference</button>
                 <button id="leaveBtn" disabled>Leave Conference</button>
+            </div>
+            <div class="audio-controls">
+                <button id="muteBtn" class="mute-btn" disabled>🎤 Mute</button>
+                <div class="audio-indicator">
+                    <span>Your Audio:</span>
+                    <div class="audio-level">
+                        <div class="audio-level-bar" id="localAudioLevel"></div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -222,6 +288,11 @@
 
         <div class="videos" id="videos"></div>
 
+        <div class="status">
+            <h2>Remote Audio Streams</h2>
+            <div id="remoteAudioStreams"></div>
+        </div>
+
         <div class="log">
             <h2>Event Log</h2>
             <div id="logEntries"></div>
@@ -230,10 +301,41 @@
 
     <script type="module">
         // Using the ES module browser bundle (with cache buster)
-        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=9';
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=12';
+
+        console.log('[Simple Client] Version 1.1.2 - Audio features with enhanced debugging');
+        console.log('[Simple Client] Checking for getLocalStream method...');
+        
+        // Verify the method exists
+        const testClient = new RelayMeshClient({
+            signalingServerUrl: 'ws://test',
+            participantName: 'test',
+            enforceSecureConnection: false
+        });
+        
+        if (typeof testClient.getLocalStream === 'function') {
+            console.log('[Simple Client] ✅ getLocalStream method is available');
+        } else {
+            console.error('[Simple Client] ❌ getLocalStream method is NOT available - old bundle cached!');
+            console.error('[Simple Client] Please hard refresh: Ctrl+Shift+R (Windows) or Cmd+Shift+R (Mac)');
+        }
 
         let client = null;
         let localStream = null;
+        let audioContext = null;
+        let localAnalyser = null;
+        let isMuted = false;
+        let remoteAudioElements = new Map();
+        
+        // Expose for debugging
+        window.debugAudio = {
+            getClient: () => client,
+            getLocalStream: () => localStream,
+            getAudioContext: () => audioContext,
+            getLocalAnalyser: () => localAnalyser,
+            getElements: () => elements,
+            getIsMuted: () => isMuted
+        };
 
         const elements = {
             serverUrl: document.getElementById('serverUrl'),
@@ -246,7 +348,10 @@
             participantId: document.getElementById('participantId'),
             participantCount: document.getElementById('participantCount'),
             videos: document.getElementById('videos'),
-            logEntries: document.getElementById('logEntries')
+            logEntries: document.getElementById('logEntries'),
+            muteBtn: document.getElementById('muteBtn'),
+            localAudioLevel: document.getElementById('localAudioLevel'),
+            remoteAudioStreams: document.getElementById('remoteAudioStreams')
         };
 
         function log(message, type = 'info') {
@@ -301,6 +406,136 @@
             return container;
         }
 
+        function setupAudioAnalyser(stream) {
+            try {
+                log('Setting up audio analyser...', 'info');
+                
+                // Check if stream has audio tracks
+                const audioTracks = stream.getAudioTracks();
+                if (audioTracks.length === 0) {
+                    log('No audio tracks in stream', 'warning');
+                    return;
+                }
+                
+                log(`Audio track: ${audioTracks[0].label}, enabled: ${audioTracks[0].enabled}`, 'info');
+                
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log(`Audio context created, state: ${audioContext.state}`, 'info');
+                
+                // Resume audio context if suspended (browser autoplay policy)
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume().then(() => {
+                        log(`Audio context resumed, state: ${audioContext.state}`, 'success');
+                    });
+                }
+                
+                const source = audioContext.createMediaStreamSource(stream);
+                localAnalyser = audioContext.createAnalyser();
+                localAnalyser.fftSize = 2048;
+                localAnalyser.smoothingTimeConstant = 0.8;
+                source.connect(localAnalyser);
+
+                // Start monitoring audio levels
+                const dataArray = new Uint8Array(localAnalyser.fftSize);
+                let frameCount = 0;
+                
+                function updateAudioLevel() {
+                    if (!localAnalyser) return;
+                    
+                    // Use time domain data for better amplitude detection
+                    localAnalyser.getByteTimeDomainData(dataArray);
+                    
+                    // Calculate RMS (Root Mean Square) for better volume representation
+                    let sum = 0;
+                    for (let i = 0; i < dataArray.length; i++) {
+                        const normalized = (dataArray[i] - 128) / 128; // Normalize to -1 to 1
+                        sum += normalized * normalized;
+                    }
+                    const rms = Math.sqrt(sum / dataArray.length);
+                    
+                    // Convert to percentage (amplify for better visibility)
+                    const percentage = Math.min(100, rms * 300);
+                    
+                    elements.localAudioLevel.style.width = `${percentage}%`;
+                    
+                    // Debug log every 60 frames (once per second at 60fps)
+                    frameCount++;
+                    if (frameCount % 60 === 0) {
+                        console.log(`[Audio Level] RMS: ${rms.toFixed(4)}, Percentage: ${percentage.toFixed(1)}%, Context: ${audioContext?.state}`);
+                    }
+                    
+                    if (client && client.getCurrentState() === 'connected') {
+                        requestAnimationFrame(updateAudioLevel);
+                    } else {
+                        console.log('[Audio Level] Loop stopped, client state:', client?.getCurrentState());
+                    }
+                }
+                
+                updateAudioLevel();
+                log('Audio monitoring started', 'success');
+            } catch (error) {
+                log(`Audio monitoring failed: ${error.message}`, 'error');
+                console.error('Audio analyser error:', error);
+            }
+        }
+
+        function addRemoteAudioElement(stream, participantId) {
+            const container = document.createElement('div');
+            container.className = 'remote-audio';
+            container.id = `audio-${participantId}`;
+
+            const label = document.createElement('span');
+            label.textContent = `🔊 ${participantId.substring(0, 20)}...`;
+
+            const audio = document.createElement('audio');
+            audio.srcObject = stream;
+            audio.autoplay = true;
+            audio.controls = true;
+            
+            // Set default volume
+            audio.volume = 0.8;
+
+            container.appendChild(label);
+            container.appendChild(audio);
+            elements.remoteAudioStreams.appendChild(container);
+
+            remoteAudioElements.set(participantId, { container, audio });
+            
+            log(`Playing audio from: ${participantId.substring(0, 20)}...`, 'success');
+        }
+
+        function removeRemoteAudioElement(participantId) {
+            const element = remoteAudioElements.get(participantId);
+            if (element) {
+                element.audio.srcObject = null;
+                element.container.remove();
+                remoteAudioElements.delete(participantId);
+            }
+        }
+
+        elements.muteBtn.addEventListener('click', () => {
+            if (!localStream) return;
+
+            // Resume audio context if suspended (helps with browser autoplay policy)
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                    log('Audio context resumed', 'info');
+                });
+            }
+
+            const audioTracks = localStream.getAudioTracks();
+            isMuted = !isMuted;
+
+            audioTracks.forEach(track => {
+                track.enabled = !isMuted;
+            });
+
+            elements.muteBtn.textContent = isMuted ? '🔇 Unmute' : '🎤 Mute';
+            elements.muteBtn.classList.toggle('muted', isMuted);
+            
+            log(isMuted ? 'Microphone muted' : 'Microphone unmuted', 'info');
+        });
+
         elements.joinBtn.addEventListener('click', async () => {
             try {
                 elements.joinBtn.disabled = true;
@@ -333,7 +568,24 @@
 
                 client.on('remoteStream', (stream) => {
                     log(`Received remote stream: ${stream.id}`, 'success');
-                    addVideoElement(stream, `Remote: ${stream.id.substring(0, 8)}`);
+                    
+                    // Add video element if stream has video tracks
+                    const hasVideo = stream.getVideoTracks && stream.getVideoTracks().length > 0;
+                    if (hasVideo) {
+                        addVideoElement(stream, `Remote: ${stream.id.substring(0, 8)}`);
+                    }
+                    
+                    // Add audio element if stream has audio tracks
+                    const hasAudio = stream.getAudioTracks && stream.getAudioTracks().length > 0;
+                    if (hasAudio) {
+                        // Extract participant ID from stream or use stream ID
+                        const participantId = stream.id;
+                        addRemoteAudioElement(stream, participantId);
+                    }
+                    
+                    if (!hasVideo && !hasAudio) {
+                        log(`Warning: Stream ${stream.id} has no tracks`, 'warning');
+                    }
                 });
 
                 client.on('topologyUpdate', (topology) => {
@@ -343,6 +595,7 @@
 
                 client.on('participantLeft', (participantId) => {
                     log(`Participant left: ${participantId.substring(0, 20)}...`, 'warning');
+                    removeRemoteAudioElement(participantId);
                     refreshStatus();
                 });
 
@@ -383,6 +636,33 @@
                 }, 500);
                 
                 const info = await client.joinConference(elements.conferenceId.value);
+                
+                console.log('[DEBUG] Join completed, getting local stream...');
+                
+                // Get local stream and setup audio monitoring
+                log('Getting local stream...', 'info');
+                localStream = client.getLocalStream();
+                
+                console.log('[DEBUG] getLocalStream returned:', localStream);
+                
+                if (localStream) {
+                    log(`Local stream ID: ${localStream.id}, active: ${localStream.active}`, 'info');
+                    
+                    const audioTracks = localStream.getAudioTracks();
+                    const videoTracks = localStream.getVideoTracks();
+                    
+                    log(`Local media: ${audioTracks.length} audio, ${videoTracks.length} video tracks`, 'info');
+                    
+                    if (audioTracks.length > 0) {
+                        log(`Audio track: ${audioTracks[0].label}, enabled: ${audioTracks[0].enabled}, muted: ${audioTracks[0].muted}`, 'info');
+                        setupAudioAnalyser(localStream);
+                        elements.muteBtn.disabled = false;
+                    } else {
+                        log('No audio tracks available for monitoring', 'warning');
+                    }
+                } else {
+                    log('Warning: No local stream available', 'warning');
+                }
                 
                 log(`Joined conference successfully!`, 'success');
                 log('Collecting metrics... participant count will update in 3-5 seconds', 'info');
@@ -435,8 +715,25 @@
                 
                 await client.leaveConference();
                 
-                // Clear videos
+                // Clean up audio context
+                if (audioContext) {
+                    audioContext.close();
+                    audioContext = null;
+                    localAnalyser = null;
+                }
+                
+                // Clear videos and audio
                 elements.videos.innerHTML = '';
+                elements.remoteAudioStreams.innerHTML = '';
+                remoteAudioElements.clear();
+                
+                // Reset audio controls
+                elements.muteBtn.disabled = true;
+                elements.muteBtn.textContent = '🎤 Mute';
+                elements.muteBtn.classList.remove('muted');
+                elements.localAudioLevel.style.width = '0%';
+                isMuted = false;
+                localStream = null;
                 
                 // Reset status
                 elements.state.textContent = 'IDLE';
