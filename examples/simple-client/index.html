@@ -230,7 +230,7 @@
 
     <script type="module">
         // Using the ES module browser bundle (with cache buster)
-        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=5';
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=9';
 
         let client = null;
         let localStream = null;
@@ -338,6 +338,11 @@
 
                 client.on('topologyUpdate', (topology) => {
                     log(`Topology updated: ${topology.relayNodes.length} relays`, 'info');
+                    refreshStatus();
+                });
+
+                client.on('participantLeft', (participantId) => {
+                    log(`Participant left: ${participantId.substring(0, 20)}...`, 'warning');
                     refreshStatus();
                 });
 

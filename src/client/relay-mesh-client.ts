@@ -296,6 +296,12 @@ export class RelayMeshClient extends EventEmitter {
       case 'relay-assignment':
         await this.handleRelayAssignment(message as RelayAssignmentMessage);
         break;
+      case 'participant-left':
+        this.handleParticipantLeft(message as any);
+        break;
+      case 'participant-joined':
+        this.handleParticipantJoined(message as any);
+        break;
       case 'webrtc-offer':
       case 'webrtc-answer':
       case 'ice-candidate':
@@ -311,6 +317,23 @@ export class RelayMeshClient extends EventEmitter {
     this.currentTopology = message.topology;
     if (message.topology) {
       this.emit('topologyUpdate', message.topology);
+    }
+
+    // Immediately add our own participant to allMetrics so count is correct
+    // This will be replaced with actual metrics once collection starts
+    const participantId = this.stateMachine.getParticipantId();
+    if (participantId && !this.allMetrics.has(participantId)) {
+      // Add placeholder metrics for ourselves
+      this.allMetrics.set(participantId, {
+        participantId,
+        timestamp: Date.now(),
+        bandwidth: { uploadMbps: 0, downloadMbps: 0, measurementConfidence: 0 },
+        natType: 0, // NATType.OPEN
+        latency: { averageRttMs: 0, minRttMs: 0, maxRttMs: 0, measurements: new Map() },
+        stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
+        device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
+      });
+      console.log('[RelayMeshClient] Added self to allMetrics on join');
     }
 
     // Complete the join transition
@@ -341,6 +364,40 @@ export class RelayMeshClient extends EventEmitter {
     console.log('[RelayMeshClient] Received metrics broadcast from:', message.from);
     this.allMetrics.set(message.from, message.metrics);
     this.evaluateTopology();
+  }
+
+  private handleParticipantLeft(message: any): void {
+    const participantId = message.participantId;
+    console.log('[RelayMeshClient] Participant left:', participantId);
+    
+    // Remove from metrics
+    this.allMetrics.delete(participantId);
+    
+    // Emit event for UI
+    this.emit('participantLeft', participantId);
+    
+    // Re-evaluate topology
+    this.evaluateTopology();
+  }
+
+  private handleParticipantJoined(message: any): void {
+    const participantId = message.participantId;
+    console.log('[RelayMeshClient] Participant joined:', participantId);
+    
+    // Immediately broadcast our metrics to the new participant
+    if (this.metricsCollector && this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
+      try {
+        const currentMetrics = this.metricsCollector.getCurrentMetrics();
+        console.log('[RelayMeshClient] Broadcasting metrics to new participant');
+        this.signalingClient.broadcastMetrics(currentMetrics);
+      } catch (error) {
+        // Metrics not ready yet
+        console.log('[RelayMeshClient] Metrics not ready to broadcast to new participant');
+      }
+    }
+    
+    // Emit event for UI
+    this.emit('participantJoined', { participantId, participantName: message.participantName });
   }
 
   private async handleRelayAssignment(message: RelayAssignmentMessage): Promise<void> {

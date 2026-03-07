@@ -225,10 +225,22 @@ export class SignalingServer {
   private handleDisconnection(participantId: string): void {
     const participant = this.participants.get(participantId);
     if (!participant) {
+      console.log('[SignalingServer] Disconnect from unknown participant:', participantId);
       return;
     }
 
     const conferenceId = participant.conferenceId;
+    console.log('[SignalingServer] Participant disconnected:', participantId, 'from conference:', conferenceId);
+    
+    // Notify other participants before removing
+    const leftMessage = {
+      type: 'participant-left' as const,
+      from: 'server',
+      timestamp: Date.now(),
+      participantId: participantId,
+    };
+    this.broadcastToConference(conferenceId, leftMessage, participantId);
+    
     this.participants.delete(participantId);
     this.authenticatedParticipants.delete(participantId); // Remove from authenticated set
 
@@ -236,9 +248,11 @@ export class SignalingServer {
     const conference = this.conferences.get(conferenceId);
     if (conference) {
       conference.participants.delete(participantId);
+      console.log('[SignalingServer] Conference', conferenceId, 'now has', conference.participants.size, 'participants');
 
       // If conference is empty, remove it
       if (conference.participants.size === 0) {
+        console.log('[SignalingServer] Conference', conferenceId, 'is empty, removing');
         this.conferences.delete(conferenceId);
       }
     }
@@ -373,6 +387,16 @@ export class SignalingServer {
     });
 
     console.log('[SignalingServer] Conference', conferenceId, 'now has', conference.participants.size, 'participants');
+
+    // Notify other participants about the new joiner
+    const joinedMessage = {
+      type: 'participant-joined' as const,
+      from: 'server',
+      timestamp: Date.now(),
+      participantId: participantId,
+      participantName: participantInfo.name,
+    };
+    this.broadcastToConference(conferenceId, joinedMessage, participantId);
 
     // Send current topology to joining participant
     const response = {

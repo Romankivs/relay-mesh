@@ -264,6 +264,12 @@ export class SignalingClient extends EventEmitter {
         case 'relay-assignment':
           this.dispatchToHandlers(this.relayAssignmentHandlers, message as RelayAssignmentMessage);
           break;
+        case 'participant-left':
+          // Handled by RelayMeshClient via generic 'message' event
+          break;
+        case 'participant-joined':
+          // Handled by RelayMeshClient via generic 'message' event
+          break;
         default:
           console.warn('Unknown message type:', message.type);
       }

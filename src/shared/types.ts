@@ -171,3 +171,14 @@ export interface RelayAssignmentMessage extends SignalingMessage {
   assignedRelayId: string;
   role: 'relay' | 'regular';
 }
+
+export interface ParticipantLeftMessage extends SignalingMessage {
+  type: 'participant-left';
+  participantId: string;
+}
+
+export interface ParticipantJoinedMessage extends SignalingMessage {
+  type: 'participant-joined';
+  participantId: string;
+  participantName: string;
+}
