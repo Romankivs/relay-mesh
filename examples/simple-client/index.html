@@ -307,7 +307,7 @@
         // Using the ES module browser bundle (with cache buster)
         import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=22';
 
-        console.log('[Simple Client] Version 1.2.3 - Local video always first in list');
+        console.log('[Simple Client] Version 1.2.4 - Join muted by default');
         console.log('[Simple Client] Checking for getLocalStream method...');
         
         // Verify the method exists
@@ -782,7 +782,15 @@
                     }
                     
                     if (audioTracks.length > 0) {
-                        log(`Audio track: ${audioTracks[0].label}, enabled: ${audioTracks[0].enabled}, muted: ${audioTracks[0].muted}`, 'info');
+                        // Mute by default when joining
+                        isMuted = true;
+                        audioTracks.forEach(track => {
+                            track.enabled = false;
+                        });
+                        elements.muteBtn.textContent = '🔇 Unmute';
+                        
+                        log(`Audio track: ${audioTracks[0].label}, muted by default`, 'info');
+                        log('You joined muted. Click Unmute to speak.', 'info');
                         setupAudioAnalyser(localStream);
                         elements.muteBtn.disabled = false;
                     } else {
