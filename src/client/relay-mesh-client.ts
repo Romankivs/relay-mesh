@@ -86,6 +86,19 @@ export class RelayMeshClient extends EventEmitter {
     this.signalingClient.on('disconnected', () => {
       this.emit('signalingDisconnected');
     });
+
+    // WebRTC signaling handlers
+    this.signalingClient.onWebRTCOffer(async (message) => {
+      await this.handleWebRTCOffer(message);
+    });
+
+    this.signalingClient.onWebRTCAnswer(async (message) => {
+      await this.handleWebRTCAnswer(message);
+    });
+
+    this.signalingClient.onICECandidate(async (message) => {
+      await this.handleICECandidate(message);
+    });
   }
 
   async joinConference(conferenceId: string): Promise<ConferenceInfo> {
@@ -111,6 +124,11 @@ export class RelayMeshClient extends EventEmitter {
       // Set up media handler events
       this.mediaHandler.onRemoteStream((stream) => {
         this.emit('remoteStream', stream);
+      });
+
+      // Set up ICE candidate handler
+      this.mediaHandler.onICECandidate((remoteParticipantId, candidate) => {
+        this.signalingClient.sendICECandidate(remoteParticipantId, candidate);
       });
 
       // Connect to signaling server
@@ -329,6 +347,20 @@ export class RelayMeshClient extends EventEmitter {
       this.emit('topologyUpdate', message.topology);
     }
 
+    // Handle existing participants information
+    if (message.existingParticipants && Array.isArray(message.existingParticipants)) {
+      console.log('[RelayMeshClient] Received existing participants:', message.existingParticipants);
+      for (const participant of message.existingParticipants) {
+        console.log('[RelayMeshClient] Emitting participantJoined for existing participant:', participant);
+        this.emit('participantJoined', {
+          participantId: participant.participantId,
+          participantName: participant.participantName,
+        });
+      }
+    } else {
+      console.log('[RelayMeshClient] No existing participants in join-response');
+    }
+
     // Immediately add our own participant to allMetrics so count is correct
     // This will be replaced with actual metrics once collection starts
     const participantId = this.stateMachine.getParticipantId();
@@ -358,6 +390,10 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private async handleTopologyUpdate(message: TopologyUpdateMessage): Promise<void> {
+    console.log('[RelayMeshClient] Received topology update:', message.topology);
+    console.log('[RelayMeshClient] Topology groups:', message.topology.groups);
+    console.log('[RelayMeshClient] Topology relay nodes:', message.topology.relayNodes);
+    
     this.currentTopology = message.topology;
     this.emit('topologyUpdate', message.topology);
 
@@ -426,27 +462,51 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private evaluateTopology(): void {
+    console.log('[RelayMeshClient] evaluateTopology called, state:', this.stateMachine.getCurrentState());
+    
     if (this.stateMachine.getCurrentState() !== ConferenceState.CONNECTED) {
+      console.log('[RelayMeshClient] Not evaluating topology - not connected');
       return;
     }
 
+    console.log('[RelayMeshClient] All metrics:', Array.from(this.allMetrics.keys()));
+    
     // Run selection algorithm
     const config = this.buildSelectionConfig();
     const relayNodeIds = this.selectionAlgorithm.selectRelayNodes(this.allMetrics, config);
+    
+    console.log('[RelayMeshClient] Selected relay nodes:', relayNodeIds);
 
     // Check if topology needs update
     const currentRelayIds = this.currentTopology?.relayNodes || [];
-    const needsUpdate = !this.arraysEqual(relayNodeIds, currentRelayIds);
+    const relayNodesChanged = !this.arraysEqual(relayNodeIds, currentRelayIds);
+    
+    // Also check if we have multiple participants but no topology groups (need P2P connections)
+    const hasMultipleParticipants = this.allMetrics.size > 1;
+    const currentGroups = this.currentTopology?.groups || [];
+    const hasGroups = currentGroups.length > 0;
+    const needsInitialTopology = hasMultipleParticipants && !hasGroups;
+    
+    const needsUpdate = relayNodesChanged || needsInitialTopology;
+    
+    console.log('[RelayMeshClient] Relay nodes changed:', relayNodesChanged);
+    console.log('[RelayMeshClient] Needs initial topology:', needsInitialTopology);
+    console.log('[RelayMeshClient] Needs topology update:', needsUpdate);
 
     if (needsUpdate) {
       // Form new topology
       const latencyMap = this.buildLatencyMap();
       const allParticipants = Array.from(this.allMetrics.keys());
+      
+      console.log('[RelayMeshClient] Forming topology with participants:', allParticipants);
+      
       const newTopology = this.topologyManager.formTopology(
         relayNodeIds,
         allParticipants,
         latencyMap
       );
+      
+      console.log('[RelayMeshClient] New topology formed:', newTopology);
 
       // Broadcast topology update via signaling
       this.signalingClient.sendTopologyUpdate(newTopology, 'relay-selection');
@@ -454,31 +514,67 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private async updateConnections(): Promise<void> {
+    console.log('[RelayMeshClient] updateConnections called');
+    console.log('[RelayMeshClient] Current topology:', this.currentTopology);
+    console.log('[RelayMeshClient] Media handler exists:', !!this.mediaHandler);
+    
     if (!this.currentTopology || !this.mediaHandler) {
+      console.log('[RelayMeshClient] Skipping updateConnections - missing topology or media handler');
       return;
     }
 
     const participantId = this.stateMachine.getParticipantId();
     if (!participantId) {
+      console.log('[RelayMeshClient] Skipping updateConnections - no participant ID');
+      return;
+    }
+
+    console.log('[RelayMeshClient] Participant ID:', participantId);
+
+    // Get local stream
+    const localStream = this.mediaHandler.getLocalStream();
+    if (!localStream) {
+      console.log('[RelayMeshClient] Skipping updateConnections - no local stream');
       return;
     }
 
     // Determine which participants we should be connected to
     const targetConnections = this.getTargetConnections(participantId);
+    
+    console.log('[RelayMeshClient] Target connections:', targetConnections);
 
     // Close connections that are no longer needed
     const currentConnections = this.mediaHandler.getActiveConnections();
+    
+    console.log('[RelayMeshClient] Current connections:', currentConnections);
     for (const remoteId of currentConnections) {
       if (!targetConnections.includes(remoteId)) {
         this.mediaHandler.closePeerConnection(remoteId);
       }
     }
 
-    // Establish new connections
+    // Establish new connections and add local stream
     const peerConfig = this.buildPeerConnectionConfig();
     for (const remoteId of targetConnections) {
       if (!currentConnections.includes(remoteId)) {
-        await this.mediaHandler.createPeerConnection(remoteId, peerConfig);
+        console.log('[RelayMeshClient] Creating peer connection to:', remoteId);
+        const peerConnection = await this.mediaHandler.createPeerConnection(remoteId, peerConfig);
+        
+        // Add local stream to the peer connection
+        console.log('[RelayMeshClient] Adding local stream to peer connection:', remoteId);
+        this.mediaHandler.addLocalStream(peerConnection, {
+          streamId: localStream.id,
+          participantId: participantId,
+          tracks: localStream.getTracks(),
+          isLocal: true,
+        });
+
+        // Initiate WebRTC offer
+        console.log('[RelayMeshClient] Creating WebRTC offer for:', remoteId);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        this.signalingClient.sendWebRTCOffer(remoteId, offer);
+        console.log('[RelayMeshClient] Sent WebRTC offer to:', remoteId);
       }
     }
 
@@ -503,6 +599,22 @@ export class RelayMeshClient extends EventEmitter {
     }
 
     const isRelay = this.currentTopology.relayNodes.includes(participantId);
+
+    // Special case: P2P mode (no relay nodes)
+    if (this.currentTopology.relayNodes.length === 0) {
+      // In P2P mode, connect to all other participants in the group
+      const group = this.currentTopology.groups.find((g) =>
+        g.relayNodeId === participantId || g.regularNodeIds.includes(participantId)
+      );
+      
+      if (group) {
+        // Connect to all other participants in the group (full mesh)
+        const allInGroup = [group.relayNodeId, ...group.regularNodeIds];
+        return allInGroup.filter((id) => id !== participantId);
+      }
+      
+      return [];
+    }
 
     if (isRelay) {
       // Relay nodes connect to all other relays and their group members
@@ -552,6 +664,114 @@ export class RelayMeshClient extends EventEmitter {
     }
 
     return latencyMap;
+  }
+
+  /**
+   * Handle incoming WebRTC offer
+   */
+  private async handleWebRTCOffer(message: any): Promise<void> {
+    if (!this.mediaHandler) {
+      console.error('[RelayMeshClient] Cannot handle offer - no media handler');
+      return;
+    }
+
+    console.log('[RelayMeshClient] Received WebRTC offer from:', message.from);
+
+    try {
+      // Get or create peer connection
+      const peerConfig = this.buildPeerConnectionConfig();
+      const peerConnection = await this.mediaHandler.createPeerConnection(message.from, peerConfig);
+
+      // Add local stream if not already added
+      const localStream = this.mediaHandler.getLocalStream();
+      if (localStream) {
+        const tracks = localStream.getTracks();
+        const senders = peerConnection.getSenders();
+        
+        // Only add tracks if they haven't been added yet
+        if (senders.length === 0) {
+          const participantId = this.stateMachine.getParticipantId();
+          this.mediaHandler.addLocalStream(peerConnection, {
+            streamId: localStream.id,
+            participantId: participantId || '',
+            tracks: tracks,
+            isLocal: true,
+          });
+        }
+      }
+
+      // Set remote description (the offer)
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+
+      // Create and send answer
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+
+      // Send answer back
+      this.signalingClient.sendWebRTCAnswer(message.from, answer);
+
+      console.log('[RelayMeshClient] Sent WebRTC answer to:', message.from);
+    } catch (error) {
+      console.error('[RelayMeshClient] Error handling WebRTC offer:', error);
+    }
+  }
+
+  /**
+   * Handle incoming WebRTC answer
+   */
+  private async handleWebRTCAnswer(message: any): Promise<void> {
+    if (!this.mediaHandler) {
+      console.error('[RelayMeshClient] Cannot handle answer - no media handler');
+      return;
+    }
+
+    console.log('[RelayMeshClient] Received WebRTC answer from:', message.from);
+
+    try {
+      const peerConnections = this.mediaHandler.getPeerConnections();
+      const peerConnection = peerConnections.get(message.from);
+
+      if (!peerConnection) {
+        console.error('[RelayMeshClient] No peer connection found for:', message.from);
+        return;
+      }
+
+      // Set remote description (the answer)
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+
+      console.log('[RelayMeshClient] Set remote description from answer:', message.from);
+    } catch (error) {
+      console.error('[RelayMeshClient] Error handling WebRTC answer:', error);
+    }
+  }
+
+  /**
+   * Handle incoming ICE candidate
+   */
+  private async handleICECandidate(message: any): Promise<void> {
+    if (!this.mediaHandler) {
+      console.error('[RelayMeshClient] Cannot handle ICE candidate - no media handler');
+      return;
+    }
+
+    console.log('[RelayMeshClient] Received ICE candidate from:', message.from);
+
+    try {
+      const peerConnections = this.mediaHandler.getPeerConnections();
+      const peerConnection = peerConnections.get(message.from);
+
+      if (!peerConnection) {
+        console.error('[RelayMeshClient] No peer connection found for:', message.from);
+        return;
+      }
+
+      // Add ICE candidate
+      await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+
+      console.log('[RelayMeshClient] Added ICE candidate from:', message.from);
+    } catch (error) {
+      console.error('[RelayMeshClient] Error handling ICE candidate:', error);
+    }
   }
 
   private generateParticipantId(): string {

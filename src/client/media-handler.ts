@@ -19,6 +19,11 @@ export interface MediaStream {
 type RemoteStreamCallback = (stream: MediaStream) => void;
 
 /**
+ * Callback type for ICE candidate events
+ */
+type ICECandidateCallback = (remoteParticipantId: string, candidate: RTCIceCandidate) => void;
+
+/**
  * MediaHandler manages WebRTC peer connections and media streams
  * 
  * Responsibilities:
@@ -33,9 +38,11 @@ export class MediaHandler {
   private localStream: globalThis.MediaStream | null = null;
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private remoteStreamCallbacks: RemoteStreamCallback[] = [];
+  private iceCandidateCallbacks: ICECandidateCallback[] = [];
   private localParticipantId: string;
   private connectionRetries: Map<string, number> = new Map(); // Track retry attempts
   private retryTimeouts: Map<string, NodeJS.Timeout> = new Map(); // Track retry timers
+  private emittedStreams: Set<string> = new Set(); // Track which streams we've already emitted
 
   constructor(localParticipantId: string) {
     this.localParticipantId = localParticipantId;
@@ -235,6 +242,15 @@ export class MediaHandler {
   }
 
   /**
+   * Register callback for ICE candidate events
+   *
+   * @param callback - Function to call when ICE candidate is generated
+   */
+  onICECandidate(callback: ICECandidateCallback): void {
+    this.iceCandidateCallbacks.push(callback);
+  }
+
+  /**
    * Adapt bitrate based on network conditions (Task 8.7)
    * Adjusts encoding parameters to match available bandwidth
    *
@@ -286,6 +302,13 @@ export class MediaHandler {
 
       // Remove from map
       this.peerConnections.delete(remoteParticipantId);
+      
+      // Clean up emitted streams for this participant
+      for (const streamKey of this.emittedStreams) {
+        if (streamKey.startsWith(remoteParticipantId)) {
+          this.emittedStreams.delete(streamKey);
+        }
+      }
     }
 
     // Cancel any pending retries
@@ -423,8 +446,9 @@ export class MediaHandler {
     this.retryTimeouts.clear();
     this.connectionRetries.clear();
 
-    // Clear callbacks
+    // Clear callbacks and emitted streams
     this.remoteStreamCallbacks = [];
+    this.emittedStreams.clear();
   }
 
   /**
@@ -458,19 +482,42 @@ export class MediaHandler {
   ): void {
     // Handle incoming tracks (remote streams)
     peerConnection.ontrack = (event) => {
+      console.log(`[MediaHandler] Received track from ${remoteParticipantId}:`, event.track.kind);
       const remoteStream = event.streams[0];
 
       if (remoteStream) {
-        const mediaStream: MediaStream = {
-          streamId: remoteStream.id,
-          participantId: remoteParticipantId,
-          tracks: remoteStream.getTracks(),
-          isLocal: false,
-        };
+        // Create a unique key for this stream
+        const streamKey = `${remoteParticipantId}-${remoteStream.id}`;
+        
+        // Only emit once per stream (ontrack fires once per track)
+        if (!this.emittedStreams.has(streamKey)) {
+          this.emittedStreams.add(streamKey);
+          
+          const mediaStream: MediaStream = {
+            streamId: remoteStream.id,
+            participantId: remoteParticipantId,
+            tracks: remoteStream.getTracks(),
+            isLocal: false,
+          };
 
+          console.log(`[MediaHandler] Emitting remoteStream event for ${remoteParticipantId}, stream: ${remoteStream.id}`);
+          // Notify all registered callbacks
+          this.remoteStreamCallbacks.forEach((callback) => {
+            callback(mediaStream);
+          });
+        } else {
+          console.log(`[MediaHandler] Stream ${streamKey} already emitted, skipping duplicate`);
+        }
+      }
+    };
+
+    // Handle ICE candidates
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log(`[MediaHandler] Generated ICE candidate for ${remoteParticipantId}`);
         // Notify all registered callbacks
-        this.remoteStreamCallbacks.forEach((callback) => {
-          callback(mediaStream);
+        this.iceCandidateCallbacks.forEach((callback) => {
+          callback(remoteParticipantId, event.candidate!);
         });
       }
     };
@@ -478,6 +525,7 @@ export class MediaHandler {
     // Handle connection state changes (Task 18.1)
     peerConnection.onconnectionstatechange = () => {
       const state = peerConnection.connectionState;
+      console.log(`[MediaHandler] Connection state to ${remoteParticipantId}: ${state}`);
 
       if (state === 'connected') {
         // Connection succeeded - reset retry counter
@@ -498,6 +546,7 @@ export class MediaHandler {
     // Handle ICE connection state changes (Task 18.1)
     peerConnection.oniceconnectionstatechange = () => {
       const state = peerConnection.iceConnectionState;
+      console.log(`[MediaHandler] ICE connection state to ${remoteParticipantId}: ${state}`);
 
       if (state === 'connected' || state === 'completed') {
         console.log(`ICE connection to ${remoteParticipantId} established`);

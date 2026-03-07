@@ -37,6 +37,24 @@ export class TopologyManager {
     allParticipants: string[],
     latencyMap: Map<string, Map<string, number>>
   ): ConnectionTopology {
+    // Special case: No relay nodes (direct P2P for small conferences)
+    if (relayNodeIds.length === 0) {
+      // For direct P2P, create a single group with all participants
+      // Each participant will connect to all others directly
+      const groups: ParticipantGroup[] = allParticipants.length > 0 ? [{
+        relayNodeId: allParticipants[0], // Use first participant as nominal "relay" for group structure
+        regularNodeIds: allParticipants.slice(1), // All others are "regular" nodes
+      }] : [];
+
+      return {
+        version: 1,
+        timestamp: Date.now(),
+        relayNodes: [], // No actual relay nodes
+        groups,
+        relayConnections: [], // No relay-to-relay connections
+      };
+    }
+
     // Initialize groups for each relay node
     const groups: ParticipantGroup[] = relayNodeIds.map(relayId => ({
       relayNodeId: relayId,

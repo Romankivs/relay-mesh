@@ -301,9 +301,9 @@
 
     <script type="module">
         // Using the ES module browser bundle (with cache buster)
-        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=12';
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=22';
 
-        console.log('[Simple Client] Version 1.1.2 - Audio features with enhanced debugging');
+        console.log('[Simple Client] Version 1.2.1 - Enhanced logging for participant names');
         console.log('[Simple Client] Checking for getLocalStream method...');
         
         // Verify the method exists
@@ -326,6 +326,9 @@
         let localAnalyser = null;
         let isMuted = false;
         let remoteAudioElements = new Map();
+        let remoteVideoElements = new Map(); // Track video elements by participant ID
+        let processedStreams = new Map(); // Track which streams we've already processed
+        let participantNames = new Map(); // Track participant names by ID
         
         // Expose for debugging
         window.debugAudio = {
@@ -384,10 +387,16 @@
             }
         }
 
-        function addVideoElement(stream, label, isLocal = false) {
+        function addVideoElement(stream, participantId, label, isLocal = false) {
+            // Check if video element already exists for this participant
+            if (!isLocal && remoteVideoElements.has(participantId)) {
+                log(`Video element already exists for ${participantId}`, 'info');
+                return remoteVideoElements.get(participantId);
+            }
+            
             const container = document.createElement('div');
             container.className = `video-container ${isLocal ? 'local-video' : ''}`;
-            container.id = `video-${stream.id}`;
+            container.id = `video-${participantId}`;
 
             const video = document.createElement('video');
             video.srcObject = stream;
@@ -403,7 +412,45 @@
             container.appendChild(labelDiv);
             elements.videos.appendChild(container);
 
+            // Track remote video elements with label reference
+            if (!isLocal) {
+                remoteVideoElements.set(participantId, { container, video, label: labelDiv });
+            }
+
             return container;
+        }
+
+        function removeVideoElement(participantId) {
+            const element = remoteVideoElements.get(participantId);
+            if (element) {
+                element.video.srcObject = null;
+                element.container.remove();
+                remoteVideoElements.delete(participantId);
+            }
+        }
+
+        function getParticipantDisplayName(participantId) {
+            const name = participantNames.get(participantId);
+            return name || participantId.substring(0, 20) + '...';
+        }
+
+        function updateParticipantLabel(participantId) {
+            const displayName = getParticipantDisplayName(participantId);
+            console.log('[updateParticipantLabel] Updating labels for:', participantId, 'to:', displayName);
+            
+            // Update audio label
+            const audioElement = remoteAudioElements.get(participantId);
+            if (audioElement && audioElement.label) {
+                console.log('[updateParticipantLabel] Updating audio label');
+                audioElement.label.textContent = `🔊 ${displayName}`;
+            }
+            
+            // Update video label
+            const videoElement = remoteVideoElements.get(participantId);
+            if (videoElement && videoElement.label) {
+                console.log('[updateParticipantLabel] Updating video label');
+                videoElement.label.textContent = displayName;
+            }
         }
 
         function setupAudioAnalyser(stream) {
@@ -458,9 +505,9 @@
                     
                     elements.localAudioLevel.style.width = `${percentage}%`;
                     
-                    // Debug log every 60 frames (once per second at 60fps)
+                    // Debug log every 300 frames (once every 5 seconds at 60fps)
                     frameCount++;
-                    if (frameCount % 60 === 0) {
+                    if (frameCount % 300 === 0) {
                         console.log(`[Audio Level] RMS: ${rms.toFixed(4)}, Percentage: ${percentage.toFixed(1)}%, Context: ${audioContext?.state}`);
                     }
                     
@@ -485,7 +532,7 @@
             container.id = `audio-${participantId}`;
 
             const label = document.createElement('span');
-            label.textContent = `🔊 ${participantId.substring(0, 20)}...`;
+            label.textContent = `🔊 ${getParticipantDisplayName(participantId)}`;
 
             const audio = document.createElement('audio');
             audio.srcObject = stream;
@@ -499,9 +546,9 @@
             container.appendChild(audio);
             elements.remoteAudioStreams.appendChild(container);
 
-            remoteAudioElements.set(participantId, { container, audio });
+            remoteAudioElements.set(participantId, { container, audio, label });
             
-            log(`Playing audio from: ${participantId.substring(0, 20)}...`, 'success');
+            log(`Playing audio from: ${getParticipantDisplayName(participantId)}`, 'success');
         }
 
         function removeRemoteAudioElement(participantId) {
@@ -567,24 +614,55 @@
                 });
 
                 client.on('remoteStream', (stream) => {
-                    log(`Received remote stream: ${stream.id}`, 'success');
+                    // Check if we've already processed this stream
+                    const streamKey = `${stream.participantId}-${stream.streamId}`;
+                    if (processedStreams.has(streamKey)) {
+                        console.log('[Remote Stream] Already processed stream:', streamKey);
+                        return;
+                    }
                     
-                    // Add video element if stream has video tracks
-                    const hasVideo = stream.getVideoTracks && stream.getVideoTracks().length > 0;
-                    if (hasVideo) {
-                        addVideoElement(stream, `Remote: ${stream.id.substring(0, 8)}`);
+                    processedStreams.set(streamKey, true);
+                    
+                    console.log('[Remote Stream] Processing stream from:', stream.participantId);
+                    console.log('[Remote Stream] Current participant names:', Array.from(participantNames.entries()));
+                    console.log('[Remote Stream] Display name will be:', getParticipantDisplayName(stream.participantId));
+                    
+                    log(`Received remote stream: ${stream.streamId}`, 'success');
+                    console.log('[Remote Stream] Full stream object:', stream);
+                    console.log('[Remote Stream] Participant ID:', stream.participantId);
+                    console.log('[Remote Stream] Tracks:', stream.tracks);
+                    
+                    // Filter tracks by kind
+                    const audioTracks = stream.tracks.filter(t => t.kind === 'audio');
+                    const videoTracks = stream.tracks.filter(t => t.kind === 'video');
+                    
+                    console.log('[Remote Stream] Audio tracks:', audioTracks.length);
+                    console.log('[Remote Stream] Video tracks:', videoTracks.length);
+                    
+                    // Create a browser MediaStream from the tracks for playback
+                    const browserStream = new MediaStream(stream.tracks);
+                    
+                    // Add video element ONLY if stream has video tracks
+                    if (videoTracks.length > 0 && !remoteVideoElements.has(stream.participantId)) {
+                        addVideoElement(browserStream, stream.participantId, getParticipantDisplayName(stream.participantId), false);
+                        log(`Added video element for ${getParticipantDisplayName(stream.participantId)}`, 'info');
                     }
                     
                     // Add audio element if stream has audio tracks
-                    const hasAudio = stream.getAudioTracks && stream.getAudioTracks().length > 0;
-                    if (hasAudio) {
-                        // Extract participant ID from stream or use stream ID
-                        const participantId = stream.id;
-                        addRemoteAudioElement(stream, participantId);
+                    if (audioTracks.length > 0) {
+                        // Check if audio element already exists for this participant
+                        if (!remoteAudioElements.has(stream.participantId)) {
+                            log(`Adding audio element for participant ${stream.participantId}`, 'info');
+                            addRemoteAudioElement(browserStream, stream.participantId);
+                        } else {
+                            log(`Audio element already exists for ${stream.participantId}`, 'info');
+                        }
+                    } else {
+                        log(`No audio tracks in remote stream ${stream.streamId}`, 'warning');
                     }
                     
-                    if (!hasVideo && !hasAudio) {
-                        log(`Warning: Stream ${stream.id} has no tracks`, 'warning');
+                    if (audioTracks.length === 0 && videoTracks.length === 0) {
+                        log(`Warning: Stream ${stream.streamId} has no tracks`, 'warning');
                     }
                 });
 
@@ -593,9 +671,39 @@
                     refreshStatus();
                 });
 
+                client.on('participantJoined', (data) => {
+                    const { participantId, participantName } = data;
+                    console.log('[participantJoined] Received:', { participantId, participantName });
+                    log(`Participant joined: ${participantName || participantId.substring(0, 20)}`, 'info');
+                    
+                    // Store participant name
+                    if (participantName) {
+                        participantNames.set(participantId, participantName);
+                        console.log('[participantJoined] Stored name:', participantId, '->', participantName);
+                        console.log('[participantJoined] All names:', Array.from(participantNames.entries()));
+                        // Update labels if elements already exist
+                        updateParticipantLabel(participantId);
+                    }
+                    
+                    refreshStatus();
+                });
+
                 client.on('participantLeft', (participantId) => {
-                    log(`Participant left: ${participantId.substring(0, 20)}...`, 'warning');
+                    const displayName = getParticipantDisplayName(participantId);
+                    log(`Participant left: ${displayName}`, 'warning');
                     removeRemoteAudioElement(participantId);
+                    removeVideoElement(participantId);
+                    
+                    // Clean up participant name
+                    participantNames.delete(participantId);
+                    
+                    // Clean up processed streams for this participant
+                    for (const [key, _] of processedStreams) {
+                        if (key.startsWith(participantId)) {
+                            processedStreams.delete(key);
+                        }
+                    }
+                    
                     refreshStatus();
                 });
 
@@ -636,6 +744,9 @@
                 }, 500);
                 
                 const info = await client.joinConference(elements.conferenceId.value);
+                
+                // Store our own participant name
+                participantNames.set(info.participantId, elements.userName.value);
                 
                 console.log('[DEBUG] Join completed, getting local stream...');
                 
@@ -726,6 +837,9 @@
                 elements.videos.innerHTML = '';
                 elements.remoteAudioStreams.innerHTML = '';
                 remoteAudioElements.clear();
+                remoteVideoElements.clear();
+                processedStreams.clear();
+                participantNames.clear();
                 
                 // Reset audio controls
                 elements.muteBtn.disabled = true;

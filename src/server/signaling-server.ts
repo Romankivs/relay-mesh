@@ -398,10 +398,18 @@ export class SignalingServer {
     };
     this.broadcastToConference(conferenceId, joinedMessage, participantId);
 
-    // Send current topology to joining participant
+    // Send current topology and existing participants to joining participant
+    const existingParticipants = Array.from(conference.participants.entries())
+      .filter(([id, _]) => id !== participantId) // Exclude the joining participant
+      .map(([id, participant]) => ({
+        participantId: id,
+        participantName: participant.name,
+      }));
+
     const response = {
       type: 'join-response',
       topology: conference.topology,
+      existingParticipants,
       timestamp: Date.now(),
     };
     ws.send(JSON.stringify(response));
