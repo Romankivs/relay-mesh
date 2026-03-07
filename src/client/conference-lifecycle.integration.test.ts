@@ -11,7 +11,7 @@ import type { ParticipantMetrics } from '../shared/types';
 describe('Conference Lifecycle Integration Tests', () => {
   let server: RelayMeshServer;
   let clients: RelayMeshClient[] = [];
-  const serverPort = 8090;
+  const serverPort = 8091;
   const serverUrl = `ws://localhost:${serverPort}`;
 
   beforeAll(async () => {
@@ -26,11 +26,17 @@ describe('Conference Lifecycle Integration Tests', () => {
   });
 
   afterAll(async () => {
-    // Stop server
+    // Stop server with error handling
     if (server) {
-      await server.stop();
+      try {
+        await server.stop();
+      } catch (error) {
+        console.error('Error stopping server in afterAll:', error);
+      }
     }
-  });
+    // Give extra time for cleanup
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }, 60000); // 60 second timeout for server shutdown
 
   afterEach(async () => {
     // Clean up all clients

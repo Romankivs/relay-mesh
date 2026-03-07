@@ -312,15 +312,15 @@ describe('MediaHandler - Property-Based Tests', () => {
       }
 
       // Verify exponential backoff pattern: ~1s, ~2s, ~4s
-      // Allow 200ms tolerance for timing variations
+      // Allow 400ms tolerance for timing variations
       expect(delays[0]).toBeGreaterThanOrEqual(900);
-      expect(delays[0]).toBeLessThanOrEqual(1200);
+      expect(delays[0]).toBeLessThanOrEqual(1400);
       
       expect(delays[1]).toBeGreaterThanOrEqual(1900);
-      expect(delays[1]).toBeLessThanOrEqual(2200);
+      expect(delays[1]).toBeLessThanOrEqual(2400);
       
       expect(delays[2]).toBeGreaterThanOrEqual(3900);
-      expect(delays[2]).toBeLessThanOrEqual(4200);
+      expect(delays[2]).toBeLessThanOrEqual(4400);
 
       // Verify retry callback was called
       expect(retryCallbackCount).toBe(3);

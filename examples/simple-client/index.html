@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RelayMesh Simple Client</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        input {
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 14px;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .status-item {
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+
+        .status-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .status-value.relay {
+            color: #667eea;
+        }
+
+        .status-value.regular {
+            color: #48bb78;
+        }
+
+        .videos {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .video-container {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: #000;
+        }
+
+        .video-label {
+            padding: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .local-video {
+            border: 3px solid #667eea;
+        }
+
+        .log {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            padding: 8px;
+            margin-bottom: 5px;
+            border-radius: 3px;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .log-entry.info {
+            background: #e6f7ff;
+            color: #0066cc;
+        }
+
+        .log-entry.success {
+            background: #f0fff4;
+            color: #22543d;
+        }
+
+        .log-entry.error {
+            background: #fff5f5;
+            color: #c53030;
+        }
+
+        .log-entry.warning {
+            background: #fffaf0;
+            color: #c05621;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎥 RelayMesh Simple Client</h1>
+            <div class="controls">
+                <input type="text" id="serverUrl" placeholder="Signaling Server URL" value="ws://localhost:8080">
+                <input type="text" id="userName" placeholder="Your Name" value="User">
+                <input type="text" id="conferenceId" placeholder="Conference ID" value="demo-conference">
+                <button id="joinBtn">Join Conference</button>
+                <button id="leaveBtn" disabled>Leave Conference</button>
+            </div>
+        </div>
+
+        <div class="status">
+            <h2>Status</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-label">State</div>
+                    <div class="status-value" id="state">IDLE</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Role</div>
+                    <div class="status-value" id="role">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Participant ID</div>
+                    <div class="status-value" id="participantId">-</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Participants</div>
+                    <div class="status-value" id="participantCount">0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="videos" id="videos"></div>
+
+        <div class="log">
+            <h2>Event Log</h2>
+            <div id="logEntries"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        // TODO: This example requires a browser build of RelayMesh
+        // The current build outputs CommonJS modules which don't work in browsers
+        // Need to add webpack/rollup/esbuild to create a browser bundle
+        // For now, this will fail with a 404 error on /dist/index.js
+        import { RelayMeshClient } from '../../dist/index.js';
+
+        let client = null;
+        let localStream = null;
+
+        const elements = {
+            serverUrl: document.getElementById('serverUrl'),
+            userName: document.getElementById('userName'),
+            conferenceId: document.getElementById('conferenceId'),
+            joinBtn: document.getElementById('joinBtn'),
+            leaveBtn: document.getElementById('leaveBtn'),
+            state: document.getElementById('state'),
+            role: document.getElementById('role'),
+            participantId: document.getElementById('participantId'),
+            participantCount: document.getElementById('participantCount'),
+            videos: document.getElementById('videos'),
+            logEntries: document.getElementById('logEntries')
+        };
+
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            elements.logEntries.insertBefore(entry, elements.logEntries.firstChild);
+        }
+
+        function updateStatus(info) {
+            if (info) {
+                elements.participantId.textContent = info.participantId || '-';
+                elements.participantCount.textContent = info.participantCount || 0;
+            }
+        }
+
+        function addVideoElement(stream, label, isLocal = false) {
+            const container = document.createElement('div');
+            container.className = `video-container ${isLocal ? 'local-video' : ''}`;
+            container.id = `video-${stream.id}`;
+
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            video.autoplay = true;
+            video.playsInline = true;
+            if (isLocal) video.muted = true;
+
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'video-label';
+            labelDiv.textContent = label;
+
+            container.appendChild(video);
+            container.appendChild(labelDiv);
+            elements.videos.appendChild(container);
+
+            return container;
+        }
+
+        elements.joinBtn.addEventListener('click', async () => {
+            try {
+                elements.joinBtn.disabled = true;
+                log('Creating client...', 'info');
+
+                client = new RelayMeshClient({
+                    signalingServerUrl: elements.serverUrl.value,
+                    participantName: elements.userName.value,
+                    enforceSecureConnection: false
+                });
+
+                // Setup event handlers
+                client.on('stateChange', (event) => {
+                    elements.state.textContent = event.to;
+                    log(`State changed: ${event.from} → ${event.to}`, 'info');
+                });
+
+                client.on('roleChange', (role) => {
+                    elements.role.textContent = role.toUpperCase();
+                    elements.role.className = `status-value ${role}`;
+                    log(`Role changed to: ${role}`, role === 'relay' ? 'warning' : 'info');
+                });
+
+                client.on('remoteStream', (stream) => {
+                    log(`Received remote stream: ${stream.id}`, 'success');
+                    addVideoElement(stream, `Remote: ${stream.id.substring(0, 8)}`);
+                });
+
+                client.on('topologyUpdate', (topology) => {
+                    log(`Topology updated: ${topology.relayNodes.length} relays`, 'info');
+                });
+
+                log('Joining conference...', 'info');
+                const info = await client.joinConference(elements.conferenceId.value);
+                
+                log(`Joined conference successfully!`, 'success');
+                updateStatus(info);
+                
+                elements.joinBtn.disabled = true;
+                elements.leaveBtn.disabled = false;
+
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                elements.joinBtn.disabled = false;
+            }
+        });
+
+        elements.leaveBtn.addEventListener('click', async () => {
+            try {
+                elements.leaveBtn.disabled = true;
+                log('Leaving conference...', 'info');
+                
+                await client.leaveConference();
+                
+                // Clear videos
+                elements.videos.innerHTML = '';
+                
+                // Reset status
+                elements.state.textContent = 'IDLE';
+                elements.role.textContent = '-';
+                elements.participantId.textContent = '-';
+                elements.participantCount.textContent = '0';
+                
+                log('Left conference', 'success');
+                elements.joinBtn.disabled = false;
+                
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                elements.leaveBtn.disabled = false;
+            }
+        });
+
+        log('Ready to join conference', 'success');
+    </script>
+</body>
+</html>

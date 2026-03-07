@@ -168,7 +168,7 @@ describe('SignalingClient - Edge Cases', () => {
       expect(client.isConnected()).toBe(false);
 
       // Send messages while disconnected
-      client.sendJoin('test-conference');
+      client.sendJoin('test-conference', 'test-participant', 'Test User');
       client.broadcastMetrics({
         participantId: 'test-participant',
         timestamp: Date.now(),
@@ -219,7 +219,7 @@ describe('SignalingClient - Edge Cases', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       // Send messages while disconnected
-      client.sendJoin('test-conference');
+      client.sendJoin('test-conference', 'test-participant', 'Test User');
       client.sendWebRTCOffer('peer1', { type: 'offer', sdp: 'test-sdp' });
 
       // Create new server for reconnection
@@ -252,7 +252,7 @@ describe('SignalingClient - Edge Cases', () => {
       }
 
       // Send messages while disconnected
-      client.sendJoin('test-conference');
+      client.sendJoin('test-conference', 'test-participant', 'Test User');
 
       // Reconnect with new server
       server = new WS(serverUrl);
@@ -271,7 +271,7 @@ describe('SignalingClient - Edge Cases', () => {
       expect(client.isConnected()).toBe(false);
 
       // Send multiple messages in specific order
-      client.sendJoin('test-conference');
+      client.sendJoin('test-conference', 'test-participant', 'Test User');
       client.sendWebRTCOffer('peer1', { type: 'offer', sdp: 'offer-1' });
       client.sendWebRTCAnswer('peer2', { type: 'answer', sdp: 'answer-1' });
       client.sendICECandidate('peer3', { candidate: 'candidate-1' });

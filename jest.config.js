@@ -3,6 +3,7 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
+  setupFilesAfterEnv: ['<rootDir>/src/test-setup.ts'],
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.test.ts',
@@ -13,5 +14,9 @@ module.exports = {
   coverageReporters: ['text', 'lcov', 'html'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   verbose: true,
-  testTimeout: 10000
+  testTimeout: 30000,
+  // Run integration tests serially to avoid port conflicts
+  maxWorkers: 1,
+  // Increase timeout for integration tests
+  testTimeout: 60000
 };

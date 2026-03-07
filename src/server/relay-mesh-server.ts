@@ -91,7 +91,8 @@ export class RelayMeshServer extends EventEmitter {
 
   async stop(): Promise<void> {
     if (!this.isRunning) {
-      throw new Error('Server is not running');
+      // Already stopped, just return
+      return;
     }
 
     try {
@@ -100,7 +101,8 @@ export class RelayMeshServer extends EventEmitter {
       this.emit('stopped');
       console.log('RelayMesh server stopped');
     } catch (error) {
-      throw error;
+      // Log error but don't throw to allow cleanup to continue
+      console.error('Error stopping server:', error);
     }
   }
 

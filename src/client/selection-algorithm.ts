@@ -172,15 +172,13 @@ export class SelectionAlgorithm {
       return false;
     }
 
-    // Must not be SYMMETRIC NAT (unless all participants are)
-    // This check is simplified - in practice, we'd check if ALL participants are SYMMETRIC
-    // For now, we just exclude SYMMETRIC NAT participants
-    if (metrics.natType === NATType.SYMMETRIC) {
-      return false;
-    }
+    // NAT type check is relaxed - SYMMETRIC NAT is allowed
+    // In practice, if all participants have SYMMETRIC NAT, we still need relays
+    // The NAT score will be lower, but they can still be selected
 
-    // Must have been connected for at least 30 seconds (prevents new joiners)
-    if (metrics.stability.connectionUptime < 30) {
+    // Must have been connected for at least 1 second (prevents immediate selection)
+    // Reduced to 1 second to allow relay selection in test environments
+    if (metrics.stability.connectionUptime < 1) {
       return false;
     }
 

@@ -123,10 +123,10 @@ export class RelayMeshClient extends EventEmitter {
       });
 
       // Send join message
-      await this.signalingClient.sendJoin(conferenceId);
+      await this.signalingClient.sendJoin(conferenceId, participantId, this.config.participantName);
 
-      // Wait for topology assignment (handled in signaling message handler)
-      // The completeJoin will be called when topology is received
+      // Wait for topology assignment and state transition to CONNECTED
+      await this.waitForState(ConferenceState.CONNECTED, 10000);
 
       return {
         conferenceId,
@@ -139,6 +139,31 @@ export class RelayMeshClient extends EventEmitter {
       await this.stateMachine.completeLeave();
       throw error;
     }
+  }
+
+  private waitForState(targetState: ConferenceState, timeoutMs: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Check if already in target state
+      if (this.stateMachine.getCurrentState() === targetState) {
+        resolve();
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        this.stateMachine.offStateChange(handler);
+        reject(new Error(`Timeout waiting for state ${targetState}`));
+      }, timeoutMs);
+
+      const handler = (event: any) => {
+        if (event.to === targetState) {
+          clearTimeout(timeout);
+          this.stateMachine.offStateChange(handler);
+          resolve();
+        }
+      };
+
+      this.stateMachine.onStateChange(handler);
+    });
   }
 
   async leaveConference(): Promise<void> {
@@ -231,12 +256,21 @@ export class RelayMeshClient extends EventEmitter {
     const participantId = this.stateMachine.getParticipantId();
     if (participantId) {
       this.allMetrics.set(participantId, metrics);
+      
+      // Broadcast metrics immediately to other participants
+      if (this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
+        this.signalingClient.broadcastMetrics(metrics);
+      }
+      
       this.evaluateTopology();
     }
   }
 
   private async handleSignalingMessage(message: SignalingMessage): Promise<void> {
     switch (message.type) {
+      case 'join-response':
+        await this.handleJoinResponse(message as any);
+        break;
       case 'topology-update':
         await this.handleTopologyUpdate(message as TopologyUpdateMessage);
         break;
@@ -252,6 +286,25 @@ export class RelayMeshClient extends EventEmitter {
         // Forward to media handler
         this.emit('webrtcSignaling', message);
         break;
+    }
+  }
+
+  private async handleJoinResponse(message: any): Promise<void> {
+    // Handle initial topology from join response
+    // Topology might be null for the first participant
+    this.currentTopology = message.topology;
+    if (message.topology) {
+      this.emit('topologyUpdate', message.topology);
+    }
+
+    // Complete the join transition
+    if (this.stateMachine.getCurrentState() === ConferenceState.JOINING) {
+      await this.stateMachine.completeJoin();
+    }
+
+    // Update connections based on topology (if topology exists)
+    if (message.topology) {
+      await this.updateConnections();
     }
   }
 
@@ -418,7 +471,11 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private generateParticipantId(): string {
-    return `participant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Use a combination of timestamp, random string, and a counter for uniqueness
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    const counter = Math.floor(Math.random() * 10000);
+    return `participant-${timestamp}-${random}-${counter}`;
   }
 
   private arraysEqual(a: string[], b: string[]): boolean {

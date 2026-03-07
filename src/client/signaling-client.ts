@@ -434,15 +434,15 @@ export class SignalingClient extends EventEmitter {
    * 
    * Task 14.7: Includes authentication credentials
    */
-  sendJoin(conferenceId: string): void {
+  sendJoin(conferenceId: string, participantId: string, participantName: string): void {
     const message: JoinMessage = {
       type: 'join',
-      from: this.config.participantId,
+      from: participantId,
       timestamp: Date.now(),
       conferenceId,
       participantInfo: {
-        id: this.config.participantId,
-        name: this.config.participantName,
+        id: participantId,
+        name: participantName,
       },
       // Include authentication if token is provided (Requirement 12.4)
       auth: this.config.authToken ? {
@@ -561,13 +561,22 @@ export class SignalingClient extends EventEmitter {
   /**
    * Send leave message to server
    */
-  sendLeave(participantId: string): void {
-    const message: SignalingMessage = {
-      type: 'leave',
-      from: participantId,
-      timestamp: Date.now(),
-    };
-    this.sendMessage(message);
+  sendLeave(participantId: string): Promise<void> {
+    return new Promise((resolve) => {
+      const message: SignalingMessage = {
+        type: 'leave',
+        from: participantId,
+        timestamp: Date.now(),
+      };
+      
+      if (this.ws && this.connectionState === ConnectionState.CONNECTED) {
+        this.ws.send(JSON.stringify(message));
+        // Give the message time to be sent
+        setTimeout(resolve, 50);
+      } else {
+        resolve();
+      }
+    });
   }
 
   /**

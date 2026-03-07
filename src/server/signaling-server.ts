@@ -140,9 +140,19 @@ export class SignalingServer {
    */
   stop(): Promise<void> {
     return new Promise((resolve) => {
+      // Set a timeout to force resolve after 5 seconds
+      const timeout = setTimeout(() => {
+        console.warn('Server stop timeout, forcing close');
+        resolve();
+      }, 5000);
+
       // Close all participant connections
       this.participants.forEach((participant) => {
-        participant.ws.close();
+        try {
+          participant.ws.terminate(); // Force close instead of graceful close
+        } catch (error) {
+          // Ignore errors during close
+        }
       });
       this.participants.clear();
 
@@ -151,14 +161,19 @@ export class SignalingServer {
         this.wss.close(() => {
           // Close HTTP/HTTPS server
           if (this.server) {
+            // Force close all connections
+            this.server.closeAllConnections?.();
             this.server.close(() => {
+              clearTimeout(timeout);
               resolve();
             });
           } else {
+            clearTimeout(timeout);
             resolve();
           }
         });
       } else {
+        clearTimeout(timeout);
         resolve();
       }
     });
@@ -178,6 +193,8 @@ export class SignalingServer {
         
         // Store participant ID for cleanup
         if (message.type === 'join') {
+          participantId = (message as any).participantInfo.id;
+        } else if (message.from) {
           participantId = message.from;
         }
 
@@ -253,6 +270,11 @@ export class SignalingServer {
 
     // Route to appropriate handler
     switch (message.type) {
+      case 'leave':
+        // Handle explicit leave message
+        this.handleDisconnection(message.from);
+        ws.close();
+        break;
       case 'topology-update':
         this.handleTopologyUpdate(message as TopologyUpdateMessage);
         break;
@@ -335,6 +357,17 @@ export class SignalingServer {
       conference = this.createConference(conferenceId);
       this.conferences.set(conferenceId, conference);
     }
+
+    // Add participant to conference
+    conference.participants.set(participantId, {
+      id: participantId,
+      name: participantInfo.name,
+      role: 'regular', // Will be updated by topology manager
+      metrics: {} as any, // Will be updated by metrics collector
+      connections: new Map(),
+      joinedAt: Date.now(),
+      lastSeen: Date.now(),
+    });
 
     // Send current topology to joining participant
     const response = {

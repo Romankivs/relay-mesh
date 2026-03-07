@@ -111,6 +111,10 @@ export class ConferenceStateMachineImpl extends EventEmitter implements Conferen
     this.on('stateChange', callback);
   }
 
+  offStateChange(callback: (event: StateTransitionEvent) => void): void {
+    this.off('stateChange', callback);
+  }
+
   getConferenceId(): string | null {
     return this.conferenceId;
   }
