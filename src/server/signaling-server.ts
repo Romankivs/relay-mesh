@@ -13,6 +13,7 @@ import {
   ConnectionTopology,
   Conference,
   SelectionConfig,
+  ParticipantMetrics,
 } from '../shared/types';
 import { AuthProvider, AuthCredentials } from '../shared/auth';
 
@@ -66,6 +67,7 @@ export class SignalingServer {
   private conferences: Map<string, Conference> = new Map();
   private config: SignalingServerConfig;
   private authenticatedParticipants: Set<string> = new Set(); // Track authenticated participants
+  private startTime: number = 0; // Track server start time for uptime
 
   constructor(config: SignalingServerConfig) {
     this.config = {
@@ -102,11 +104,11 @@ export class SignalingServer {
             ca: this.config.tlsOptions.ca,
             requestCert: this.config.tlsOptions.requestCert || false,
             rejectUnauthorized: this.config.tlsOptions.rejectUnauthorized || false,
-          });
+          }, this.handleHttpRequest.bind(this));
           console.log('Signaling server starting with TLS encryption enabled');
         } else {
           // Create HTTP server (only for development/testing)
-          this.server = http.createServer();
+          this.server = http.createServer(this.handleHttpRequest.bind(this));
           console.warn(
             'WARNING: Signaling server starting WITHOUT TLS encryption. ' +
             'This should only be used for development/testing!'
@@ -123,6 +125,7 @@ export class SignalingServer {
 
         // Start listening
         this.server.listen(this.config.port, () => {
+          this.startTime = Date.now();
           resolve();
         });
 
@@ -661,5 +664,177 @@ export class SignalingServer {
    */
   isParticipantAuthenticated(participantId: string): boolean {
     return this.authenticatedParticipants.has(participantId);
+  }
+
+  /**
+   * Handle HTTP requests for monitoring API
+   */
+  private handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    // Set CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    // Handle OPTIONS preflight
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    // Only handle GET requests
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Method not allowed' }));
+      return;
+    }
+
+    const url = req.url || '/';
+
+    // Route to appropriate handler
+    if (url === '/api/monitoring') {
+      this.handleMonitoringRequest(res);
+    } else if (url === '/api/server-info') {
+      this.handleServerInfoRequest(res);
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not found' }));
+    }
+  }
+
+  /**
+   * Handle /api/monitoring request
+   */
+  private handleMonitoringRequest(res: http.ServerResponse): void {
+    try {
+      const serverInfo = this.getServerInfo();
+      const conferences = this.getConferencesData();
+      const participants = this.getParticipantsData();
+
+      const data = {
+        serverInfo: {
+          activeConferences: serverInfo.activeConferences,
+          totalParticipants: serverInfo.activeConnections,
+          uptime: Date.now() - this.startTime,
+        },
+        conferences,
+        participants,
+        events: [
+          {
+            time: Date.now(),
+            message: `Server running - ${serverInfo.activeConferences} conferences, ${serverInfo.activeConnections} participants`,
+          },
+        ],
+      };
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (error) {
+      console.error('Error in handleMonitoringRequest:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      }));
+    }
+  }
+
+  /**
+   * Handle /api/server-info request
+   */
+  private handleServerInfoRequest(res: http.ServerResponse): void {
+    try {
+      const info = this.getServerInfo();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(info));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+  }
+
+  /**
+   * Get conferences data for monitoring
+   */
+  private getConferencesData(): any[] {
+    const conferences: any[] = [];
+
+    for (const [conferenceId, conference] of this.conferences.entries()) {
+      conferences.push({
+        id: conferenceId,
+        topology: {
+          relayNodes: conference.topology.relayNodes,
+          groups: conference.topology.groups,
+          relayConnections: conference.topology.relayConnections,
+        },
+      });
+    }
+
+    return conferences;
+  }
+
+  /**
+   * Get participants data for monitoring
+   */
+  private getParticipantsData(): any[] {
+    const participants: any[] = [];
+
+    for (const [conferenceId, conference] of this.conferences.entries()) {
+      // Build a set of relay node IDs from topology
+      const relayNodeIds = new Set<string>();
+      conference.topology.relayNodes.forEach(id => relayNodeIds.add(id));
+      conference.topology.groups.forEach(group => {
+        relayNodeIds.add(group.relayNodeId);
+      });
+
+      for (const [participantId, participant] of conference.participants.entries()) {
+        // Check if metrics exist before accessing
+        if (!participant.metrics) {
+          continue;
+        }
+
+        const metrics = participant.metrics;
+        
+        // Determine role from topology structure
+        const role = relayNodeIds.has(participantId) ? 'relay' : 'regular';
+
+        participants.push({
+          id: participantId,
+          name: participant.name,
+          role: role, // Use topology-derived role
+          bandwidth: metrics.bandwidth?.uploadMbps || 0,
+          latency: metrics.latency?.averageRttMs || 0,
+          packetLoss: metrics.stability?.packetLossPercent || 0,
+          quality: this.calculateQuality(metrics),
+        });
+      }
+    }
+
+    return participants;
+  }
+
+  /**
+   * Calculate connection quality from metrics
+   */
+  private calculateQuality(metrics: ParticipantMetrics): string {
+    // Check if required properties exist
+    if (!metrics.latency || !metrics.stability) {
+      return 'unknown';
+    }
+
+    const { latency, stability } = metrics;
+
+    // Poor: high latency or packet loss
+    if (latency.averageRttMs > 200 || stability.packetLossPercent > 3) {
+      return 'poor';
+    }
+
+    // Warning: moderate issues
+    if (latency.averageRttMs > 100 || stability.packetLossPercent > 1) {
+      return 'warning';
+    }
+
+    // Good: acceptable performance
+    return 'good';
   }
 }

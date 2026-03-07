@@ -1,14 +1,17 @@
 # RelayMesh Monitoring Dashboard Example
 
-A web-based monitoring dashboard for visualizing RelayMesh server metrics and topology.
+A real-time web-based monitoring dashboard for visualizing RelayMesh server metrics and topology using interactive graphs.
 
 ## Features
 
+- Interactive force-directed graph visualization of conference topology
 - Real-time server metrics (conferences, participants, uptime)
-- Visual topology representation showing relay groups
+- Visual representation of relay nodes and their connections
 - Participant metrics table with bandwidth, latency, and packet loss
 - Event log for tracking system events
 - Auto-refresh every 5 seconds
+- Drag-and-drop node positioning
+- Hover tooltips with detailed participant information
 - Clean, responsive UI
 
 ## Running the Example
@@ -26,55 +29,42 @@ Open http://localhost:3001 in your browser.
 
 ### Option 2: Connected to Real Server
 
-To connect to a real RelayMesh server, you'll need to implement a monitoring API endpoint.
+To connect to a real RelayMesh server:
 
-#### 1. Add Monitoring Endpoint to Server
+#### 1. Install Dependencies
 
-```javascript
-// server.js
-const express = require('express');
-const { RelayMeshServer } = require('relay-mesh');
-
-const app = express();
-const server = new RelayMeshServer({ port: 8080 });
-
-// Monitoring API
-app.get('/api/metrics', (req, res) => {
-  const info = server.getServerInfo();
-  res.json({
-    serverInfo: {
-      activeConferences: info.activeConferences,
-      totalParticipants: info.totalParticipants,
-      uptime: info.uptime
-    },
-    // Add more data as needed
-  });
-});
-
-app.listen(3000);
-await server.start();
+```bash
+npm install express cors
 ```
 
-#### 2. Update Dashboard to Fetch Real Data
+#### 2. Start the Server with Monitoring API
 
-Replace the mock data in `index.html`:
+```bash
+# Start the signaling server with monitoring API
+node examples/server/server.js
+```
+
+This will start:
+- WebSocket signaling server on port 8080
+- Monitoring API on port 3000
+
+#### 3. Update Dashboard Configuration
+
+Edit `examples/monitoring-dashboard/index.html`:
 
 ```javascript
-async function fetchMetrics() {
-  const response = await fetch('http://localhost:3000/api/metrics');
-  const data = await response.json();
-  return data;
-}
-
-async function refreshData() {
-  const data = await fetchMetrics();
-  mockData = data;
-  updateMetrics();
-  renderTopology();
-  renderParticipantMetrics();
-  renderEventLog();
-}
+// Change this line
+const USE_MOCK_DATA = false; // Use real API
 ```
+
+#### 4. Open the Dashboard
+
+```bash
+# Serve the dashboard
+npx http-server examples/monitoring-dashboard -p 3001
+```
+
+Open http://localhost:3001 in your browser.
 
 ## Dashboard Sections
 
@@ -86,12 +76,15 @@ Displays key server statistics:
 - **Relay Nodes**: Number of participants acting as relays
 - **Server Uptime**: How long the server has been running
 
-### Connection Topology
+### Connection Topology (Interactive Graph)
 
-Visual representation of the relay topology:
-- Shows relay nodes and their assigned regular nodes
-- Groups participants by their relay node
-- Color-coded for easy identification
+Interactive force-directed graph showing the relay mesh topology:
+- **Blue nodes**: Relay nodes (larger circles)
+- **Green nodes**: Regular nodes (smaller circles)
+- **Dashed blue lines**: Relay-to-relay connections
+- **Solid green lines**: Relay-to-regular connections
+- **Drag nodes**: Click and drag to reposition
+- **Hover**: View detailed metrics for each participant
 
 ### Participant Metrics
 
@@ -111,22 +104,81 @@ Chronological log of system events:
 - Topology updates
 - Errors and warnings
 
+## Monitoring API Endpoints
+
+The monitoring API provides several endpoints:
+
+### GET /api/monitoring
+
+Returns complete monitoring data:
+
+```json
+{
+  "serverInfo": {
+    "activeConferences": 2,
+    "totalParticipants": 8,
+    "uptime": 3600000
+  },
+  "conferences": [...],
+  "participants": [...],
+  "events": [...]
+}
+```
+
+### GET /api/topology
+
+Returns just the topology snapshot:
+
+```json
+{
+  "topology": {
+    "version": 5,
+    "timestamp": 1234567890,
+    "relayNodes": ["user-1", "user-2"],
+    "groups": [...],
+    "relayConnections": [["user-1", "user-2"]]
+  },
+  "relayNodeAssignments": [...]
+}
+```
+
+### GET /api/metrics
+
+Returns server and participant metrics:
+
+```json
+{
+  "serverInfo": {...},
+  "participants": [...]
+}
+```
+
+### GET /api/events
+
+Returns event log with optional filtering:
+
+Query parameters:
+- `type`: Filter by event type
+- `conferenceId`: Filter by conference
+- `startTime`: Unix timestamp (ms)
+- `endTime`: Unix timestamp (ms)
+
 ## Customization
 
 ### Styling
 
 Edit the CSS in `index.html` to customize colors, layout, and appearance.
 
-### Metrics
+### Graph Layout
 
-Add custom metrics by extending the data structure:
+Adjust force simulation parameters in the `renderTopology` function:
 
 ```javascript
-mockData.customMetrics = {
-  cpuUsage: 45.2,
-  memoryUsage: 62.8,
-  networkThroughput: 125.5
-};
+simulation = d3.forceSimulation(nodes)
+  .force('link', d3.forceLink(links).id(d => d.id).distance(150)) // Link distance
+  .force('charge', d3.forceManyBody().strength(-300)) // Repulsion strength
+  .force('center', d3.forceCenter(width / 2, height / 2))
+  .force('collision', d3.forceCollide().radius(40)); // Collision radius
 ```
 
 ### Refresh Interval
@@ -145,7 +197,7 @@ setInterval(refreshData, 10000);
 
 ### Prometheus
 
-Export metrics in Prometheus format:
+Export metrics in Prometheus format by adding an endpoint:
 
 ```javascript
 app.get('/metrics', (req, res) => {
@@ -171,6 +223,13 @@ Create a Grafana dashboard using the Prometheus metrics:
 2. Create panels for each metric
 3. Set up alerts for critical thresholds
 
+## Technology Stack
+
+- **D3.js v7**: Force-directed graph visualization
+- **Express**: Monitoring API server
+- **WebSocket**: Real-time signaling
+- **Vanilla JavaScript**: No framework dependencies
+
 ## Browser Support
 
 - Chrome 74+
@@ -183,3 +242,4 @@ Create a Grafana dashboard using the Prometheus metrics:
 - [API Documentation](../../docs/API.md)
 - [Configuration Guide](../../docs/CONFIGURATION.md)
 - [Deployment Guide](../../docs/DEPLOYMENT.md)
+- [Server Example](../server/README.md)

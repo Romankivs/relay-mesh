@@ -1,16 +1,26 @@
 # RelayMesh Simple Server Example
 
-A minimal signaling server for development and testing.
+A minimal signaling server for development and testing with built-in monitoring API.
+
+## Features
+
+- WebSocket signaling server for RelayMesh clients
+- Built-in HTTP monitoring API on the same port
+- Graceful shutdown handling
+- Environment-based configuration
+- Activity logging
+- CORS support for dashboard
 
 ## Quick Start
 
 ```bash
 # From the project root
-cd examples/server
-node server.js
+node examples/server/server.js
 ```
 
-The server will start on `ws://localhost:8080`
+The server will start on port 8080 with:
+- **WebSocket Server**: ws://localhost:8080 (signaling)
+- **Monitoring API**: http://localhost:8080/api/monitoring (metrics and topology)
 
 ## Configuration
 
@@ -46,7 +56,7 @@ node server.js
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PORT` | Server port | `8080` |
+| `PORT` | Server port (WebSocket + HTTP API) | `8080` |
 | `HOST` | Server host | `0.0.0.0` |
 | `TLS_ENABLED` | Enable TLS/SSL | `false` |
 | `TLS_CERT_PATH` | Path to TLS certificate | - |
@@ -54,6 +64,26 @@ node server.js
 | `AUTH_REQUIRED` | Require authentication | `false` |
 | `MAX_CONFERENCES` | Maximum concurrent conferences | `100` |
 | `MAX_PARTICIPANTS` | Maximum participants per conference | `50` |
+
+## Monitoring API
+
+The server exposes HTTP endpoints on the same port as the WebSocket server:
+
+### GET /api/monitoring
+
+Complete monitoring data including topology, metrics, and events.
+
+```bash
+curl http://localhost:8080/api/monitoring
+```
+
+### GET /api/server-info
+
+Server information only.
+
+```bash
+curl http://localhost:8080/api/server-info
+```
 
 ## Using with Example Client
 
@@ -65,12 +95,29 @@ node server.js
 2. Open the simple client:
 ```bash
 cd ../simple-client
-npx http-server -p 3000
+npx http-server -p 3001
 ```
 
-3. Open http://localhost:3000 in your browser
+3. Open http://localhost:3001 in your browser
 
 4. Enter server URL: `ws://localhost:8080`
+
+## Using with Monitoring Dashboard
+
+1. Start the server:
+```bash
+node server.js
+```
+
+2. Serve the dashboard:
+```bash
+cd ../monitoring-dashboard
+npx http-server -p 3001
+```
+
+3. Open http://localhost:3001 in your browser
+
+The dashboard will automatically connect to http://localhost:8080/api/monitoring
 
 ## Production Deployment
 
@@ -132,6 +179,10 @@ openssl x509 -in cert.pem -text -noout
 openssl x509 -noout -modulus -in cert.pem | openssl md5
 openssl rsa -noout -modulus -in key.pem | openssl md5
 ```
+
+### CORS Issues
+
+The monitoring API includes CORS headers by default. All origins are allowed for development.
 
 ## Development Tips
 

@@ -146,11 +146,16 @@ export class SelectionAlgorithm {
 
     // Filter eligible participants and calculate scores
     const eligibleScores: RelayScore[] = [];
+    const ineligibleReasons: Map<string, string> = new Map();
 
     for (const [participantId, metrics] of allMetrics) {
       if (this.isEligibleForRelay(metrics, config)) {
         const score = this.calculateScore(metrics, config);
         eligibleScores.push(score);
+      } else {
+        // Track why participant is ineligible
+        const reason = this.getIneligibilityReason(metrics, config);
+        ineligibleReasons.set(participantId, reason);
       }
     }
 
@@ -159,7 +164,41 @@ export class SelectionAlgorithm {
 
     // Return top N participant IDs
     const selectedCount = Math.min(optimalRelayCount, eligibleScores.length);
-    return eligibleScores.slice(0, selectedCount).map((score) => score.participantId);
+    const selectedIds = eligibleScores.slice(0, selectedCount).map((score) => score.participantId);
+
+    // Log selection decision
+    console.log('🔄 Relay Selection:', {
+      totalParticipants: allMetrics.size,
+      optimalRelayCount,
+      eligibleCount: eligibleScores.length,
+      selectedCount,
+      selected: selectedIds,
+      scores: eligibleScores.slice(0, selectedCount).map(s => ({
+        id: s.participantId,
+        total: s.totalScore.toFixed(3),
+        bandwidth: s.bandwidthScore.toFixed(3),
+        nat: s.natScore.toFixed(3),
+        latency: s.latencyScore.toFixed(3),
+        stability: s.stabilityScore.toFixed(3),
+        device: s.deviceScore.toFixed(3),
+      })),
+      ineligible: Array.from(ineligibleReasons.entries()).map(([id, reason]) => ({ id, reason })),
+    });
+
+    return selectedIds;
+  }
+
+  /**
+   * Get reason why a participant is ineligible for relay
+   */
+  private getIneligibilityReason(metrics: ParticipantMetrics, config: SelectionConfig): string {
+    if (metrics.bandwidth.uploadMbps < config.minBandwidthMbps) {
+      return `Bandwidth too low: ${metrics.bandwidth.uploadMbps.toFixed(1)} < ${config.minBandwidthMbps} Mbps`;
+    }
+    if (metrics.stability.connectionUptime < 1) {
+      return `Connection too new: ${metrics.stability.connectionUptime}s < 1s`;
+    }
+    return 'Unknown reason';
   }
 
   /**
