@@ -146,6 +146,10 @@
             border: 3px solid #667eea;
         }
 
+        .local-video video {
+            transform: scaleX(-1); /* Mirror the video horizontally */
+        }
+
         .log {
             background: white;
             border-radius: 10px;
@@ -303,7 +307,7 @@
         // Using the ES module browser bundle (with cache buster)
         import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=22';
 
-        console.log('[Simple Client] Version 1.2.1 - Enhanced logging for participant names');
+        console.log('[Simple Client] Version 1.2.3 - Local video always first in list');
         console.log('[Simple Client] Checking for getLocalStream method...');
         
         // Verify the method exists
@@ -410,7 +414,13 @@
 
             container.appendChild(video);
             container.appendChild(labelDiv);
-            elements.videos.appendChild(container);
+            
+            // Insert local video at the beginning, remote videos at the end
+            if (isLocal) {
+                elements.videos.insertBefore(container, elements.videos.firstChild);
+            } else {
+                elements.videos.appendChild(container);
+            }
 
             // Track remote video elements with label reference
             if (!isLocal) {
@@ -763,6 +773,13 @@
                     const videoTracks = localStream.getVideoTracks();
                     
                     log(`Local media: ${audioTracks.length} audio, ${videoTracks.length} video tracks`, 'info');
+                    
+                    // Add local video preview if video tracks exist
+                    if (videoTracks.length > 0) {
+                        const userName = elements.userName.value || 'You';
+                        addVideoElement(localStream, 'local', `${userName} (You)`, true);
+                        log('Local video preview added', 'info');
+                    }
                     
                     if (audioTracks.length > 0) {
                         log(`Audio track: ${audioTracks[0].label}, enabled: ${audioTracks[0].enabled}, muted: ${audioTracks[0].muted}`, 'info');
