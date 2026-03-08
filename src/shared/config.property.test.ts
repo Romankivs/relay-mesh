@@ -114,7 +114,7 @@ describe('Property 37: Configuration Application', () => {
 
             // Select relay nodes
             const allMetrics = new Map([['participant-1', metrics]]);
-            const selectedRelays = algorithm.selectRelayNodes(allMetrics, config);
+            const selectedRelays = algorithm.selectRelayNodes(allMetrics, config).selectedIds;
 
             // Verify: participant should only be selected if bandwidth >= minBandwidthMbps
             if (participantBandwidth >= customMinBandwidth) {
@@ -736,7 +736,7 @@ describe('Property 38: Configuration Defaults', () => {
 
             // Verify relay selection works with default config
             const allMetrics = new Map([['test-participant', metrics]]);
-            const selectedRelays = algorithm.selectRelayNodes(allMetrics, config);
+            const selectedRelays = algorithm.selectRelayNodes(allMetrics, config).selectedIds;
 
             // Should return valid result (array, possibly empty for single participant)
             expect(Array.isArray(selectedRelays)).toBe(true);

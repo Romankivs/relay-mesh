@@ -89,6 +89,27 @@ export interface Conference {
   config: SelectionConfig;
   createdAt: number;
   lastTopologyUpdate: number;
+  lastRelaySelection?: {
+    timestamp: number;
+    totalParticipants: number;
+    optimalRelayCount: number;
+    eligibleCount: number;
+    selectedCount: number;
+    selectedIds: string[];
+    scores: Array<{
+      id: string;
+      total: string;
+      bandwidth: string;
+      nat: string;
+      latency: string;
+      stability: string;
+      device: string;
+    }>;
+    ineligible: Array<{
+      id: string;
+      reason: string;
+    }>;
+  };
 }
 
 // ============================================================================
@@ -181,4 +202,30 @@ export interface ParticipantJoinedMessage extends SignalingMessage {
   type: 'participant-joined';
   participantId: string;
   participantName: string;
+}
+
+export interface RelaySelectionDataMessage extends SignalingMessage {
+  type: 'relay-selection-data';
+  conferenceId: string;
+  selectionData: {
+    timestamp: number;
+    totalParticipants: number;
+    optimalRelayCount: number;
+    eligibleCount: number;
+    selectedCount: number;
+    selectedIds: string[];
+    scores: Array<{
+      id: string;
+      total: string;
+      bandwidth: string;
+      nat: string;
+      latency: string;
+      stability: string;
+      device: string;
+    }>;
+    ineligible: Array<{
+      id: string;
+      reason: string;
+    }>;
+  };
 }

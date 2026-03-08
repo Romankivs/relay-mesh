@@ -494,7 +494,8 @@
 
                 // Start monitoring audio levels
                 const dataArray = new Uint8Array(localAnalyser.fftSize);
-                let frameCount = 0;
+                let lastLoggedRms = -1;
+                const rmsChangeThreshold = 0.01; // Only log if RMS changes by more than 1%
                 
                 function updateAudioLevel() {
                     if (!localAnalyser) return;
@@ -515,10 +516,10 @@
                     
                     elements.localAudioLevel.style.width = `${percentage}%`;
                     
-                    // Debug log every 300 frames (once every 5 seconds at 60fps)
-                    frameCount++;
-                    if (frameCount % 300 === 0) {
+                    // Only log when RMS value changes significantly
+                    if (Math.abs(rms - lastLoggedRms) > rmsChangeThreshold) {
                         console.log(`[Audio Level] RMS: ${rms.toFixed(4)}, Percentage: ${percentage.toFixed(1)}%, Context: ${audioContext?.state}`);
+                        lastLoggedRms = rms;
                     }
                     
                     if (client && client.getCurrentState() === 'connected') {

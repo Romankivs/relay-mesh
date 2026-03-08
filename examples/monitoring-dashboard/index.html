@@ -292,6 +292,140 @@
             padding: 40px;
             color: #a0aec0;
         }
+
+        .relay-selection-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .selection-summary {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #4299e1;
+        }
+
+        .selection-summary-title {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 10px;
+        }
+
+        .selection-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            font-size: 13px;
+        }
+
+        .selection-stat {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .selection-stat-label {
+            color: #718096;
+        }
+
+        .selection-stat-value {
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .score-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+        }
+
+        .score-card {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .score-card.selected {
+            border-color: #4299e1;
+            background: #ebf8ff;
+        }
+
+        .score-card.ineligible {
+            border-color: #fc8181;
+            background: #fff5f5;
+        }
+
+        .score-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .score-card-name {
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .score-card-total {
+            font-size: 20px;
+            font-weight: 700;
+            color: #4299e1;
+        }
+
+        .score-card.ineligible .score-card-total {
+            color: #fc8181;
+        }
+
+        .score-breakdown {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        .score-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .score-label {
+            color: #718096;
+        }
+
+        .score-bar-container {
+            flex: 1;
+            margin: 0 10px;
+            height: 6px;
+            background: #e2e8f0;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .score-bar {
+            height: 100%;
+            background: #48bb78;
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        .score-value {
+            font-weight: 600;
+            color: #2d3748;
+            min-width: 40px;
+            text-align: right;
+        }
+
+        .ineligible-reason {
+            margin-top: 10px;
+            padding: 8px;
+            background: #fed7d7;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #742a2a;
+        }
     </style>
 </head>
 <body>
@@ -378,6 +512,13 @@
         </div>
 
         <div class="section">
+            <div class="section-title">Relay Selection Details</div>
+            <div id="relaySelection" class="relay-selection-container">
+                <div class="empty-state">No relay selection data available</div>
+            </div>
+        </div>
+
+        <div class="section">
             <div class="section-title">Event Log</div>
             <div id="eventLog" style="max-height: 300px; overflow-y: auto;">
                 <div class="empty-state">No events</div>
@@ -430,6 +571,21 @@
                 { id: 'user-7', name: 'Grace', role: 'relay', bandwidth: 18.5, latency: 32, packetLoss: 0.1, quality: 'good' },
                 { id: 'user-8', name: 'Henry', role: 'regular', bandwidth: 5.5, latency: 78, packetLoss: 2.1, quality: 'warning' }
             ],
+            relaySelection: {
+                totalParticipants: 8,
+                optimalRelayCount: 3,
+                eligibleCount: 5,
+                selectedCount: 3,
+                scores: [
+                    { id: 'user-7', total: '0.892', bandwidth: '0.925', nat: '1.000', latency: '0.840', stability: '0.950', device: '0.850' },
+                    { id: 'user-1', total: '0.856', bandwidth: '0.760', nat: '0.750', latency: '0.775', stability: '0.990', device: '0.900' },
+                    { id: 'user-2', total: '0.743', bandwidth: '0.640', nat: '0.750', latency: '0.740', stability: '0.970', device: '0.800' }
+                ],
+                ineligible: [
+                    { id: 'user-4', reason: 'Bandwidth too low: 3.2 < 5 Mbps' },
+                    { id: 'user-8', reason: 'Connection too new: 0.5s < 1s' }
+                ]
+            },
             events: [
                 { time: Date.now() - 5000, message: 'User Alice promoted to relay node' },
                 { time: Date.now() - 15000, message: 'User Henry joined conference conf-2' },
@@ -490,6 +646,11 @@
 
             svg.attr('width', width).attr('height', height);
             svg.selectAll('*').remove();
+
+            // Stop the old simulation if it exists
+            if (simulation) {
+                simulation.stop();
+            }
 
             // Build graph data structure
             const nodes = [];
@@ -718,6 +879,7 @@
             updateMetrics(data);
             renderTopology(data);
             renderParticipantMetrics(data);
+            renderRelaySelection(data);
             renderEventLog(data);
         }
 
@@ -756,6 +918,124 @@
                     <td><span class="badge ${p.quality}">${p.quality.toUpperCase()}</span></td>
                 </tr>
             `}).join('');
+        }
+
+        function renderRelaySelection(data) {
+            const container = document.getElementById('relaySelection');
+            
+            // Check if we have relay selection data
+            if (!data.relaySelection) {
+                container.innerHTML = '<div class="empty-state">No relay selection data available</div>';
+                return;
+            }
+
+            const selection = data.relaySelection;
+            
+            // Build summary
+            let html = `
+                <div class="selection-summary">
+                    <div class="selection-summary-title">Selection Summary</div>
+                    <div class="selection-stats">
+                        <div class="selection-stat">
+                            <span class="selection-stat-label">Total Participants:</span>
+                            <span class="selection-stat-value">${selection.totalParticipants}</span>
+                        </div>
+                        <div class="selection-stat">
+                            <span class="selection-stat-label">Optimal Relays:</span>
+                            <span class="selection-stat-value">${selection.optimalRelayCount}</span>
+                        </div>
+                        <div class="selection-stat">
+                            <span class="selection-stat-label">Eligible:</span>
+                            <span class="selection-stat-value">${selection.eligibleCount}</span>
+                        </div>
+                        <div class="selection-stat">
+                            <span class="selection-stat-label">Selected:</span>
+                            <span class="selection-stat-value">${selection.selectedCount}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Build score cards
+            html += '<div class="score-cards">';
+            
+            // Selected relays
+            if (selection.scores && selection.scores.length > 0) {
+                selection.scores.forEach(score => {
+                    const participant = data.participants.find(p => p.id === score.id);
+                    const name = participant ? participant.name : score.id;
+                    
+                    html += `
+                        <div class="score-card selected">
+                            <div class="score-card-header">
+                                <span class="score-card-name">✓ ${name}</span>
+                                <span class="score-card-total">${score.total}</span>
+                            </div>
+                            <div class="score-breakdown">
+                                <div class="score-item">
+                                    <span class="score-label">Bandwidth</span>
+                                    <div class="score-bar-container">
+                                        <div class="score-bar" style="width: ${parseFloat(score.bandwidth) * 100}%"></div>
+                                    </div>
+                                    <span class="score-value">${score.bandwidth}</span>
+                                </div>
+                                <div class="score-item">
+                                    <span class="score-label">NAT Type</span>
+                                    <div class="score-bar-container">
+                                        <div class="score-bar" style="width: ${parseFloat(score.nat) * 100}%"></div>
+                                    </div>
+                                    <span class="score-value">${score.nat}</span>
+                                </div>
+                                <div class="score-item">
+                                    <span class="score-label">Latency</span>
+                                    <div class="score-bar-container">
+                                        <div class="score-bar" style="width: ${parseFloat(score.latency) * 100}%"></div>
+                                    </div>
+                                    <span class="score-value">${score.latency}</span>
+                                </div>
+                                <div class="score-item">
+                                    <span class="score-label">Stability</span>
+                                    <div class="score-bar-container">
+                                        <div class="score-bar" style="width: ${parseFloat(score.stability) * 100}%"></div>
+                                    </div>
+                                    <span class="score-value">${score.stability}</span>
+                                </div>
+                                <div class="score-item">
+                                    <span class="score-label">Device</span>
+                                    <div class="score-bar-container">
+                                        <div class="score-bar" style="width: ${parseFloat(score.device) * 100}%"></div>
+                                    </div>
+                                    <span class="score-value">${score.device}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            // Ineligible participants
+            if (selection.ineligible && selection.ineligible.length > 0) {
+                selection.ineligible.forEach(item => {
+                    const participant = data.participants.find(p => p.id === item.id);
+                    const name = participant ? participant.name : item.id;
+                    
+                    html += `
+                        <div class="score-card ineligible">
+                            <div class="score-card-header">
+                                <span class="score-card-name">✗ ${name}</span>
+                                <span class="score-card-total">N/A</span>
+                            </div>
+                            <div class="ineligible-reason">
+                                ${item.reason}
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            html += '</div>';
+            
+            container.innerHTML = html;
         }
 
         function renderEventLog(data) {

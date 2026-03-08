@@ -135,12 +135,35 @@ export class SelectionAlgorithm {
    * 
    * @param allMetrics - Map of all participant metrics
    * @param config - Selection configuration
-   * @returns Array of participant IDs selected as relay nodes
+   * @returns Object with selected IDs and full selection details
    */
   selectRelayNodes(
     allMetrics: Map<string, ParticipantMetrics>,
     config: SelectionConfig
-  ): string[] {
+  ): {
+    selectedIds: string[];
+    selectionData: {
+      timestamp: number;
+      totalParticipants: number;
+      optimalRelayCount: number;
+      eligibleCount: number;
+      selectedCount: number;
+      selectedIds: string[];
+      scores: Array<{
+        id: string;
+        total: string;
+        bandwidth: string;
+        nat: string;
+        latency: string;
+        stability: string;
+        device: string;
+      }>;
+      ineligible: Array<{
+        id: string;
+        reason: string;
+      }>;
+    };
+  } {
     // Calculate optimal number of relay nodes
     const optimalRelayCount = this.calculateOptimalRelayCount(allMetrics.size);
 
@@ -166,13 +189,14 @@ export class SelectionAlgorithm {
     const selectedCount = Math.min(optimalRelayCount, eligibleScores.length);
     const selectedIds = eligibleScores.slice(0, selectedCount).map((score) => score.participantId);
 
-    // Log selection decision
-    console.log('🔄 Relay Selection:', {
+    // Build selection data for monitoring
+    const selectionData = {
+      timestamp: Date.now(),
       totalParticipants: allMetrics.size,
       optimalRelayCount,
       eligibleCount: eligibleScores.length,
       selectedCount,
-      selected: selectedIds,
+      selectedIds,
       scores: eligibleScores.slice(0, selectedCount).map(s => ({
         id: s.participantId,
         total: s.totalScore.toFixed(3),
@@ -183,9 +207,9 @@ export class SelectionAlgorithm {
         device: s.deviceScore.toFixed(3),
       })),
       ineligible: Array.from(ineligibleReasons.entries()).map(([id, reason]) => ({ id, reason })),
-    });
+    };
 
-    return selectedIds;
+    return { selectedIds, selectionData };
   }
 
   /**

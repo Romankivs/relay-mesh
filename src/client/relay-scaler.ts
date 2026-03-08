@@ -127,7 +127,7 @@ export class RelayScaler {
     const newRelayIds = this.selectionAlgorithm.selectRelayNodes(
       nonRelayMetrics,
       config
-    ).slice(0, relaysToAdd);
+    ).selectedIds.slice(0, relaysToAdd);
 
     // Combine current and new relay nodes
     const updatedRelayNodes = [...currentTopology.relayNodes, ...newRelayIds];

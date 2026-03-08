@@ -552,6 +552,21 @@ export class SignalingClient extends EventEmitter {
     this.sendMessage(message);
   }
 
+  /**
+   * Send relay selection data to server for monitoring
+   */
+  sendRelaySelectionData(conferenceId: string, selectionData: any): void {
+    const message = {
+      type: 'relay-selection-data',
+      from: this.config.participantId,
+      timestamp: Date.now(),
+      conferenceId,
+      selectionData,
+    };
+    this.sendMessage(message as any);
+  }
+
+
 
   /**
    * Update authentication token (Task 14.7)

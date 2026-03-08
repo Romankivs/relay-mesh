@@ -245,20 +245,26 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   getConferenceInfo(): ConferenceInfo | null {
-    const conferenceId = this.stateMachine.getConferenceId();
-    const participantId = this.stateMachine.getParticipantId();
+      const conferenceId = this.stateMachine.getConferenceId();
+      const participantId = this.stateMachine.getParticipantId();
 
-    if (!conferenceId || !participantId) {
-      return null;
+      if (!conferenceId || !participantId) {
+        return null;
+      }
+
+      // Determine role from current topology
+      let role: 'relay' | 'regular' = 'regular';
+      if (this.currentTopology && this.currentTopology.relayNodes.includes(participantId)) {
+        role = 'relay';
+      }
+
+      return {
+        conferenceId,
+        participantId,
+        participantCount: this.allMetrics.size,
+        role,
+      };
     }
-
-    return {
-      conferenceId,
-      participantId,
-      participantCount: this.allMetrics.size,
-      role: this.currentRole,
-    };
-  }
 
   /**
    * Get the local media stream
@@ -297,18 +303,31 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private handleLocalMetricsUpdate(metrics: ParticipantMetrics): void {
-    const participantId = this.stateMachine.getParticipantId();
-    if (participantId) {
-      this.allMetrics.set(participantId, metrics);
-      
-      // Broadcast metrics immediately to other participants
-      if (this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
-        this.signalingClient.broadcastMetrics(metrics);
+      const participantId = this.stateMachine.getParticipantId();
+      if (participantId) {
+        // If the new metrics have 0 bandwidth and we already have placeholder metrics with non-zero bandwidth,
+        // preserve the placeholder bandwidth values until real measurements are available
+        const existingMetrics = this.allMetrics.get(participantId);
+        if (existingMetrics && 
+            metrics.bandwidth.uploadMbps === 0 && 
+            metrics.bandwidth.downloadMbps === 0 &&
+            existingMetrics.bandwidth.uploadMbps > 0) {
+          metrics = {
+            ...metrics,
+            bandwidth: existingMetrics.bandwidth
+          };
+        }
+
+        this.allMetrics.set(participantId, metrics);
+
+        // Broadcast metrics immediately to other participants
+        if (this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
+          this.signalingClient.broadcastMetrics(metrics);
+        }
+
+        this.evaluateTopology();
       }
-      
-      this.evaluateTopology();
     }
-  }
 
   private async handleSignalingMessage(message: SignalingMessage): Promise<void> {
     switch (message.type) {
@@ -356,6 +375,21 @@ export class RelayMeshClient extends EventEmitter {
           participantId: participant.participantId,
           participantName: participant.participantName,
         });
+        
+        // Add placeholder metrics for existing participants
+        // These will be replaced when we receive their metrics broadcasts
+        if (!this.allMetrics.has(participant.participantId)) {
+          this.allMetrics.set(participant.participantId, {
+            participantId: participant.participantId,
+            timestamp: Date.now(),
+            bandwidth: { uploadMbps: 5.0, downloadMbps: 10.0, measurementConfidence: 0.1 },
+            natType: 0, // NATType.OPEN
+            latency: { averageRttMs: 50, minRttMs: 50, maxRttMs: 50, measurements: new Map() },
+            stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
+            device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
+          });
+          console.log('[RelayMeshClient] Added placeholder metrics for existing participant:', participant.participantId);
+        }
       }
     } else {
       console.log('[RelayMeshClient] No existing participants in join-response');
@@ -365,17 +399,19 @@ export class RelayMeshClient extends EventEmitter {
     // This will be replaced with actual metrics once collection starts
     const participantId = this.stateMachine.getParticipantId();
     if (participantId && !this.allMetrics.has(participantId)) {
-      // Add placeholder metrics for ourselves
+      // Add placeholder metrics for ourselves with reasonable defaults
+      // Using conservative bandwidth values (5 Mbps upload, 10 Mbps download)
+      // to ensure participants are eligible for relay selection until real metrics arrive
       this.allMetrics.set(participantId, {
         participantId,
         timestamp: Date.now(),
-        bandwidth: { uploadMbps: 0, downloadMbps: 0, measurementConfidence: 0 },
+        bandwidth: { uploadMbps: 5.0, downloadMbps: 10.0, measurementConfidence: 0.1 },
         natType: 0, // NATType.OPEN
-        latency: { averageRttMs: 0, minRttMs: 0, maxRttMs: 0, measurements: new Map() },
+        latency: { averageRttMs: 50, minRttMs: 50, maxRttMs: 50, measurements: new Map() },
         stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
         device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
       });
-      console.log('[RelayMeshClient] Added self to allMetrics on join');
+      console.log('[RelayMeshClient] Added self to allMetrics on join with default bandwidth values');
     }
 
     // Complete the join transition
@@ -387,6 +423,15 @@ export class RelayMeshClient extends EventEmitter {
     if (message.topology) {
       await this.updateConnections();
     }
+    
+    // Schedule a delayed update of relay selection data after connections stabilize
+    // This gives time for metrics collection to start and initial broadcasts to occur
+    setTimeout(() => {
+      if (this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
+        console.log('[RelayMeshClient] Delayed relay selection data update after join');
+        this.updateRelaySelectionData();
+      }
+    }, 2000); // 2 second delay to allow metrics to be collected and broadcast
   }
 
   private async handleTopologyUpdate(message: TopologyUpdateMessage): Promise<void> {
@@ -407,10 +452,29 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private handleMetricsBroadcast(message: MetricsBroadcastMessage): void {
-    console.log('[RelayMeshClient] Received metrics broadcast from:', message.from);
-    this.allMetrics.set(message.from, message.metrics);
-    this.evaluateTopology();
-  }
+      console.log('[RelayMeshClient] Received metrics broadcast from:', message.from);
+
+      // If the received metrics have 0 bandwidth and we already have placeholder metrics with non-zero bandwidth,
+      // preserve the placeholder bandwidth values until real measurements are available
+      const existingMetrics = this.allMetrics.get(message.from);
+      let metrics = message.metrics;
+
+      if (existingMetrics && 
+          metrics.bandwidth.uploadMbps === 0 && 
+          metrics.bandwidth.downloadMbps === 0 &&
+          existingMetrics.bandwidth.uploadMbps > 0) {
+        metrics = {
+          ...metrics,
+          bandwidth: existingMetrics.bandwidth
+        };
+      }
+
+      this.allMetrics.set(message.from, metrics);
+
+      // Evaluate topology - this will update relay selection data and trigger
+      // topology changes only if needed (e.g., when relay nodes change)
+      this.evaluateTopology();
+    }
 
   private handleParticipantLeft(message: any): void {
     const participantId = message.participantId;
@@ -429,6 +493,29 @@ export class RelayMeshClient extends EventEmitter {
   private handleParticipantJoined(message: any): void {
     const participantId = message.participantId;
     console.log('[RelayMeshClient] Participant joined:', participantId);
+    
+    // Add placeholder metrics for the new participant
+    // These will be replaced when we receive their metrics broadcasts
+    if (!this.allMetrics.has(participantId)) {
+      this.allMetrics.set(participantId, {
+        participantId: participantId,
+        timestamp: Date.now(),
+        bandwidth: { uploadMbps: 5.0, downloadMbps: 10.0, measurementConfidence: 0.1 },
+        natType: 0, // NATType.OPEN
+        latency: { averageRttMs: 50, minRttMs: 50, maxRttMs: 50, measurements: new Map() },
+        stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
+        device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
+      });
+      console.log('[RelayMeshClient] Added placeholder metrics for new participant:', participantId);
+      
+      // Schedule a delayed update of relay selection data
+      setTimeout(() => {
+        if (this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
+          console.log('[RelayMeshClient] Delayed relay selection data update after participant joined');
+          this.updateRelaySelectionData();
+        }
+      }, 1000); // 1 second delay
+    }
     
     // Immediately broadcast our metrics to the new participant
     if (this.metricsCollector && this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
@@ -462,20 +549,20 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private evaluateTopology(): void {
-    console.log('[RelayMeshClient] evaluateTopology called, state:', this.stateMachine.getCurrentState());
-    
     if (this.stateMachine.getCurrentState() !== ConferenceState.CONNECTED) {
-      console.log('[RelayMeshClient] Not evaluating topology - not connected');
       return;
     }
 
-    console.log('[RelayMeshClient] All metrics:', Array.from(this.allMetrics.keys()));
-    
     // Run selection algorithm
     const config = this.buildSelectionConfig();
-    const relayNodeIds = this.selectionAlgorithm.selectRelayNodes(this.allMetrics, config);
-    
-    console.log('[RelayMeshClient] Selected relay nodes:', relayNodeIds);
+    const result = this.selectionAlgorithm.selectRelayNodes(this.allMetrics, config);
+    const relayNodeIds = result.selectedIds;
+
+    // Send relay selection data to server for monitoring
+    const conferenceId = this.stateMachine.getConferenceId();
+    if (this.signalingClient && conferenceId) {
+      this.signalingClient.sendRelaySelectionData(conferenceId, result.selectionData);
+    }
 
     // Check if topology needs update
     const currentRelayIds = this.currentTopology?.relayNodes || [];
@@ -488,17 +575,14 @@ export class RelayMeshClient extends EventEmitter {
     const needsInitialTopology = hasMultipleParticipants && !hasGroups;
     
     const needsUpdate = relayNodesChanged || needsInitialTopology;
-    
-    console.log('[RelayMeshClient] Relay nodes changed:', relayNodesChanged);
-    console.log('[RelayMeshClient] Needs initial topology:', needsInitialTopology);
-    console.log('[RelayMeshClient] Needs topology update:', needsUpdate);
 
+    // Only log when topology actually changes
     if (needsUpdate) {
+      console.log('[RelayMeshClient] Topology update needed - relay nodes changed:', relayNodesChanged, 'needs initial:', needsInitialTopology);
+      
       // Form new topology
       const latencyMap = this.buildLatencyMap();
       const allParticipants = Array.from(this.allMetrics.keys());
-      
-      console.log('[RelayMeshClient] Forming topology with participants:', allParticipants);
       
       const newTopology = this.topologyManager.formTopology(
         relayNodeIds,
@@ -512,6 +596,27 @@ export class RelayMeshClient extends EventEmitter {
       this.signalingClient.sendTopologyUpdate(newTopology, 'relay-selection');
     }
   }
+  /**
+   * Update relay selection data for monitoring without triggering topology changes
+   * This is useful when we want to refresh the monitoring dashboard data
+   * without disrupting existing connections
+   */
+  private updateRelaySelectionData(): void {
+      if (this.stateMachine.getCurrentState() !== ConferenceState.CONNECTED) {
+        return;
+      }
+
+      // Run selection algorithm to get current selection data
+      const config = this.buildSelectionConfig();
+      const result = this.selectionAlgorithm.selectRelayNodes(this.allMetrics, config);
+
+      // Send relay selection data to server for monitoring
+      const conferenceId = this.stateMachine.getConferenceId();
+      if (this.signalingClient && conferenceId) {
+        this.signalingClient.sendRelaySelectionData(conferenceId, result.selectionData);
+      }
+    }
+
 
   private async updateConnections(): Promise<void> {
     console.log('[RelayMeshClient] updateConnections called');
@@ -638,7 +743,7 @@ export class RelayMeshClient extends EventEmitter {
       latencyWeight: 0.2,
       stabilityWeight: 0.15,
       deviceWeight: 0.1,
-      minBandwidthMbps: 5,
+      minBandwidthMbps: 0.1, // Lowered for development - allows selection even with minimal bandwidth
       maxParticipantsPerRelay: 5,
       reevaluationIntervalMs: 30000,
       ...this.config.selectionConfig,
@@ -657,14 +762,31 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private buildLatencyMap(): Map<string, Map<string, number>> {
-    const latencyMap = new Map<string, Map<string, number>>();
+      const latencyMap = new Map<string, Map<string, number>>();
 
-    for (const [participantId, metrics] of this.allMetrics) {
-      latencyMap.set(participantId, metrics.latency.measurements);
+      for (const [participantId, metrics] of this.allMetrics) {
+        // Handle case where measurements might be a plain object (from JSON serialization)
+        // or a Map (from local creation)
+        const measurements = metrics.latency.measurements;
+        if (measurements instanceof Map) {
+          latencyMap.set(participantId, measurements);
+        } else if (measurements && typeof measurements === 'object') {
+          // Convert plain object to Map
+          const map = new Map<string, number>();
+          for (const [key, value] of Object.entries(measurements)) {
+            if (typeof value === 'number') {
+              map.set(key, value);
+            }
+          }
+          latencyMap.set(participantId, map);
+        } else {
+          // No measurements, use empty Map
+          latencyMap.set(participantId, new Map());
+        }
+      }
+
+      return latencyMap;
     }
-
-    return latencyMap;
-  }
 
   /**
    * Handle incoming WebRTC offer
@@ -678,9 +800,34 @@ export class RelayMeshClient extends EventEmitter {
     console.log('[RelayMeshClient] Received WebRTC offer from:', message.from);
 
     try {
+      // Check if we already have a peer connection (we might have sent an offer too)
+      const peerConnections = this.mediaHandler.getPeerConnections();
+      let peerConnection = peerConnections.get(message.from);
+      
+      // If we have a peer connection and we're in have-local-offer state,
+      // we have an offer/answer collision. Use tie-breaker based on participant IDs.
+      if (peerConnection && peerConnection.signalingState === 'have-local-offer') {
+        console.log('[RelayMeshClient] Offer collision detected');
+        
+        const myId = this.stateMachine.getParticipantId() || '';
+        const theirId = message.from;
+        
+        // Use lexicographic comparison as tie-breaker
+        // Lower ID wins and keeps their offer, higher ID rolls back
+        if (myId < theirId) {
+          console.log('[RelayMeshClient] We win tie-breaker, ignoring their offer');
+          return; // Ignore their offer, they will process our offer
+        } else {
+          console.log('[RelayMeshClient] They win tie-breaker, rolling back our offer');
+          await peerConnection.setLocalDescription({type: 'rollback'} as any);
+        }
+      }
+      
       // Get or create peer connection
-      const peerConfig = this.buildPeerConnectionConfig();
-      const peerConnection = await this.mediaHandler.createPeerConnection(message.from, peerConfig);
+      if (!peerConnection) {
+        const peerConfig = this.buildPeerConnectionConfig();
+        peerConnection = await this.mediaHandler.createPeerConnection(message.from, peerConfig);
+      }
 
       // Add local stream if not already added
       const localStream = this.mediaHandler.getLocalStream();
@@ -733,6 +880,12 @@ export class RelayMeshClient extends EventEmitter {
 
       if (!peerConnection) {
         console.error('[RelayMeshClient] No peer connection found for:', message.from);
+        return;
+      }
+
+      // Check if we're in the right state to accept an answer
+      if (peerConnection.signalingState !== 'have-local-offer') {
+        console.log('[RelayMeshClient] Ignoring answer - not in have-local-offer state (current:', peerConnection.signalingState, ')');
         return;
       }
 

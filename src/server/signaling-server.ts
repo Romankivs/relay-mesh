@@ -52,6 +52,7 @@ interface ConnectedParticipant {
   conferenceId: string;
   ws: WebSocket;
   connectedAt: number;
+  metrics?: ParticipantMetrics; // Optional, updated via metrics broadcasts
 }
 
 /**
@@ -310,6 +311,9 @@ export class SignalingServer {
       case 'relay-assignment':
         this.handleRelayAssignment(message as RelayAssignmentMessage);
         break;
+      case 'relay-selection-data':
+        this.handleRelaySelectionData(message as any);
+        break;
       default:
         console.warn('Unknown message type:', message.type);
     }
@@ -383,7 +387,15 @@ export class SignalingServer {
       id: participantId,
       name: participantInfo.name,
       role: 'regular', // Will be updated by topology manager
-      metrics: {} as any, // Will be updated by metrics collector
+      metrics: {
+        participantId,
+        timestamp: Date.now(),
+        bandwidth: { uploadMbps: 5.0, downloadMbps: 10.0, measurementConfidence: 0.1 },
+        natType: 0, // NATType.OPEN
+        latency: { averageRttMs: 50, minRttMs: 50, maxRttMs: 50, measurements: new Map() },
+        stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
+        device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
+      }, // Will be updated by metrics broadcasts
       connections: new Map(),
       joinedAt: Date.now(),
       lastSeen: Date.now(),
@@ -494,6 +506,9 @@ export class SignalingServer {
 
     console.log('[SignalingServer] Received metrics broadcast from:', senderId, 'in conference:', participant.conferenceId);
     
+    // Store the metrics for monitoring API
+    participant.metrics = message.metrics;
+    
     // Broadcast to all other participants in the conference
     const conference = this.conferences.get(participant.conferenceId);
     if (conference) {
@@ -547,6 +562,19 @@ export class SignalingServer {
     // Broadcast to all participants in the conference
     this.broadcastToConference(participant.conferenceId, message, senderId);
   }
+
+  /**
+   * Handle relay selection data message
+   * Stores relay selection information for monitoring
+   */
+  private handleRelaySelectionData(message: any): void {
+    const conference = this.conferences.get(message.conferenceId);
+    if (conference) {
+      conference.lastRelaySelection = message.selectionData;
+      console.log('📊 Stored relay selection data for conference:', message.conferenceId);
+    }
+  }
+
 
   /**
    * Route message to specific participant
@@ -710,6 +738,7 @@ export class SignalingServer {
       const serverInfo = this.getServerInfo();
       const conferences = this.getConferencesData();
       const participants = this.getParticipantsData();
+      const relaySelection = this.getRelaySelectionData();
 
       const data = {
         serverInfo: {
@@ -719,6 +748,7 @@ export class SignalingServer {
         },
         conferences,
         participants,
+        relaySelection,
         events: [
           {
             time: Date.now(),
@@ -836,5 +866,18 @@ export class SignalingServer {
 
     // Good: acceptable performance
     return 'good';
+  }
+
+  /**
+   * Get relay selection data from the most recent conference
+   */
+  private getRelaySelectionData(): any | null {
+    // Get the first conference with relay selection data
+    for (const [conferenceId, conference] of this.conferences.entries()) {
+      if (conference.lastRelaySelection) {
+        return conference.lastRelaySelection;
+      }
+    }
+    return null;
   }
 }

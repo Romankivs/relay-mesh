@@ -86,7 +86,7 @@ describe('Scalability Scenarios', () => {
       const optimalRelayCount = selectionAlgorithm.calculateOptimalRelayCount(participantCount);
       expect(optimalRelayCount).toBe(3);
 
-      const relayIds = selectionAlgorithm.selectRelayNodes(allMetrics, config);
+      const relayIds = selectionAlgorithm.selectRelayNodes(allMetrics, config).selectedIds;
       expect(relayIds.length).toBeLessThanOrEqual(3);
     });
 
@@ -153,7 +153,7 @@ describe('Scalability Scenarios', () => {
       const optimalRelayCount = selectionAlgorithm.calculateOptimalRelayCount(participantCount);
       expect(optimalRelayCount).toBe(4);
 
-      const relayIds = selectionAlgorithm.selectRelayNodes(allMetrics, config);
+      const relayIds = selectionAlgorithm.selectRelayNodes(allMetrics, config).selectedIds;
       expect(relayIds.length).toBeLessThanOrEqual(4);
     });
 
@@ -214,7 +214,7 @@ describe('Scalability Scenarios', () => {
       const optimalRelayCount = selectionAlgorithm.calculateOptimalRelayCount(participantCount);
       expect(optimalRelayCount).toBe(5);
 
-      const relayIds = selectionAlgorithm.selectRelayNodes(allMetrics, config);
+      const relayIds = selectionAlgorithm.selectRelayNodes(allMetrics, config).selectedIds;
       expect(relayIds.length).toBeLessThanOrEqual(5);
     });
 
@@ -291,7 +291,7 @@ describe('Scalability Scenarios', () => {
       const optimalRelayCount = selectionAlgorithm.calculateOptimalRelayCount(participantCount);
       expect(optimalRelayCount).toBe(6);
 
-      const relayIds = selectionAlgorithm.selectRelayNodes(allMetrics, config);
+      const relayIds = selectionAlgorithm.selectRelayNodes(allMetrics, config).selectedIds;
       expect(relayIds.length).toBeLessThanOrEqual(6);
     });
 

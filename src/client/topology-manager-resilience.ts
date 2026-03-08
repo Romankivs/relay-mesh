@@ -62,7 +62,7 @@ export class ResilientTopologyManager extends TopologyManager {
         console.log('Attempting relay selection with relaxed criteria');
         const relaxedConfig = this.createRelaxedConfig(config);
         const selectionAlgorithm = new SelectionAlgorithm();
-        const relaxedRelayIds = selectionAlgorithm.selectRelayNodes(allMetrics, relaxedConfig);
+        const relaxedRelayIds = selectionAlgorithm.selectRelayNodes(allMetrics, relaxedConfig).selectedIds;
 
         if (relaxedRelayIds.length > 0) {
           console.log(`Selected ${relaxedRelayIds.length} relays with relaxed criteria`);

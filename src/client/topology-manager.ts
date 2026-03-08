@@ -424,7 +424,7 @@ export class TopologyManager {
     const replacementCandidates = this.selectionAlgorithm.selectRelayNodes(
       affectedMetrics,
       config
-    );
+    ).selectedIds;
 
     if (replacementCandidates.length > 0 && remainingRelayNodes.length > 0) {
       // Promote a replacement relay from the affected group
