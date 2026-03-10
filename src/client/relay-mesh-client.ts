@@ -47,6 +47,17 @@ export class RelayMeshClient extends EventEmitter {
   private allMetrics: Map<string, ParticipantMetrics> = new Map();
   private currentRole: 'relay' | 'regular' = 'regular';
   private metricsUpdateInterval: NodeJS.Timeout | null = null;
+  private lastTopologyRelayIds: string[] = [];
+  private lastTopologyMetricsSnapshot: Map<string, {
+    uploadMbps: number;
+    downloadMbps: number;
+    natType: number;
+    latency: number;
+    packetLoss: number;
+    jitter: number;
+    uptime: number;
+    cpuUsage: number;
+  }> = new Map();
 
   constructor(config: RelayMeshClientConfig) {
     super();
@@ -438,9 +449,51 @@ export class RelayMeshClient extends EventEmitter {
     console.log('[RelayMeshClient] Received topology update:', message.topology);
     console.log('[RelayMeshClient] Topology groups:', message.topology.groups);
     console.log('[RelayMeshClient] Topology relay nodes:', message.topology.relayNodes);
+    console.log('[RelayMeshClient] Topology version:', message.topology.version, 'timestamp:', message.topology.timestamp);
+    
+    // Only accept topology updates that are newer than our current topology
+    // This prevents race conditions when multiple clients broadcast topology updates
+    if (this.currentTopology) {
+      const currentVersion = this.currentTopology.version;
+      const currentTimestamp = this.currentTopology.timestamp;
+      const newVersion = message.topology.version;
+      const newTimestamp = message.topology.timestamp;
+      
+      // Compare by version first, then by timestamp as tiebreaker
+      const isNewer = newVersion > currentVersion || 
+                     (newVersion === currentVersion && newTimestamp > currentTimestamp);
+      
+      if (!isNewer) {
+        console.log('[RelayMeshClient] Ignoring older/duplicate topology update');
+        return;
+      }
+      
+      console.log('[RelayMeshClient] Accepting newer topology update');
+    }
+    
+    // Check if our role changed
+    const participantId = this.stateMachine.getParticipantId();
+    const oldRole = this.currentTopology && participantId && this.currentTopology.relayNodes.includes(participantId) ? 'relay' : 'regular';
+    const newRole = participantId && message.topology.relayNodes.includes(participantId) ? 'relay' : 'regular';
     
     this.currentTopology = message.topology;
     this.emit('topologyUpdate', message.topology);
+    
+    // Emit role change event if role changed
+    if (oldRole !== newRole) {
+      console.log('[RelayMeshClient] Role changed from', oldRole, 'to', newRole);
+      this.currentRole = newRole;
+      this.emit('roleChange', newRole);
+      
+      // Handle relay engine
+      if (newRole === 'relay' && !this.relayEngine) {
+        this.relayEngine = new RelayEngine();
+        this.relayEngine.startRelay();
+      } else if (newRole === 'regular' && this.relayEngine) {
+        this.relayEngine.stopRelay();
+        this.relayEngine = null;
+      }
+    }
 
     // If we were joining, complete the join
     if (this.stateMachine.getCurrentState() === ConferenceState.JOINING) {
@@ -548,7 +601,15 @@ export class RelayMeshClient extends EventEmitter {
     }
   }
 
-  private evaluateTopology(): void {
+  private async evaluateTopology(): Promise<void> {
+    try {
+      await this.evaluateTopologyInternal();
+    } catch (error) {
+      console.error('[RelayMeshClient] Error evaluating topology:', error);
+    }
+  }
+
+  private async evaluateTopologyInternal(): Promise<void> {
     if (this.stateMachine.getCurrentState() !== ConferenceState.CONNECTED) {
       return;
     }
@@ -566,19 +627,42 @@ export class RelayMeshClient extends EventEmitter {
 
     // Check if topology needs update
     const currentRelayIds = this.currentTopology?.relayNodes || [];
+    // Sort both arrays before comparison to avoid false positives from different ordering
     const relayNodesChanged = !this.arraysEqual(relayNodeIds, currentRelayIds);
     
-    // Also check if we have multiple participants but no topology groups (need P2P connections)
-    const hasMultipleParticipants = this.allMetrics.size > 1;
-    const currentGroups = this.currentTopology?.groups || [];
-    const hasGroups = currentGroups.length > 0;
-    const needsInitialTopology = hasMultipleParticipants && !hasGroups;
+    console.log('[RelayMeshClient] Relay comparison - new:', [...relayNodeIds].sort(), 'current:', [...currentRelayIds].sort(), 'changed:', relayNodesChanged);
     
-    const needsUpdate = relayNodesChanged || needsInitialTopology;
-
-    // Only log when topology actually changes
-    if (needsUpdate) {
-      console.log('[RelayMeshClient] Topology update needed - relay nodes changed:', relayNodesChanged, 'needs initial:', needsInitialTopology);
+    // Check for participant count changes (new/deleted users)
+    const participantCountChanged = this.allMetrics.size !== this.lastTopologyMetricsSnapshot.size;
+    
+    // If relay nodes haven't changed and participant count is the same, check for metric changes
+    if (!relayNodesChanged && !participantCountChanged) {
+      // Check if metrics have changed significantly
+      const metricsChangedSignificantly = this.hasSignificantMetricChange(0.3); // 30% threshold
+      
+      if (!metricsChangedSignificantly) {
+        console.log('[RelayMeshClient] Topology unchanged - same relays, same participants, no significant metric changes');
+        return;
+      }
+    }
+    
+    // If we get here, something changed - form new topology and check if it's actually different
+    if (relayNodesChanged || participantCountChanged) {
+      console.log('[RelayMeshClient] Topology update needed - relay nodes changed:', relayNodesChanged, 'participant count changed:', participantCountChanged);
+      
+      // Leader election: Only the participant with the lowest ID broadcasts topology updates
+      // This prevents race conditions when multiple clients try to update topology simultaneously
+      const participantId = this.stateMachine.getParticipantId();
+      const allParticipantIds = Array.from(this.allMetrics.keys()).sort();
+      const leaderId = allParticipantIds[0];
+      
+      if (participantId !== leaderId) {
+        console.log('[RelayMeshClient] Not the leader (leader is', leaderId, '), skipping topology broadcast');
+        // Non-leaders still evaluate topology for monitoring, but don't broadcast
+        return;
+      }
+      
+      console.log('[RelayMeshClient] We are the leader, forming new topology');
       
       // Form new topology
       const latencyMap = this.buildLatencyMap();
@@ -592,8 +676,168 @@ export class RelayMeshClient extends EventEmitter {
       
       console.log('[RelayMeshClient] New topology formed:', newTopology);
 
+      // Check if topology actually changed (compare groups, not just relay IDs)
+      if (this.topologyEquals(this.currentTopology, newTopology)) {
+        console.log('[RelayMeshClient] Topology unchanged - suppressing broadcast');
+        // Update snapshot to prevent repeated checks
+        this.lastTopologyRelayIds = [...relayNodeIds].sort();
+        this.snapshotMetrics();
+        return;
+      }
+
       // Broadcast topology update via signaling
+      console.log('[RelayMeshClient] Broadcasting topology update');
       this.signalingClient.sendTopologyUpdate(newTopology, 'relay-selection');
+      
+      // Update our local topology immediately (we won't receive our own broadcast)
+      const oldRole = this.currentTopology && participantId && this.currentTopology.relayNodes.includes(participantId) ? 'relay' : 'regular';
+      const newRole = participantId && newTopology.relayNodes.includes(participantId) ? 'relay' : 'regular';
+      
+      this.currentTopology = newTopology;
+      this.emit('topologyUpdate', newTopology);
+      
+      // Emit role change event if role changed
+      if (oldRole !== newRole) {
+        console.log('[RelayMeshClient] Role changed from', oldRole, 'to', newRole);
+        this.currentRole = newRole;
+        this.emit('roleChange', newRole);
+        
+        // Handle relay engine
+        if (newRole === 'relay' && !this.relayEngine) {
+          this.relayEngine = new RelayEngine();
+          this.relayEngine.startRelay();
+        } else if (newRole === 'regular' && this.relayEngine) {
+          this.relayEngine.stopRelay();
+          this.relayEngine = null;
+        }
+      }
+      
+      // Update connections based on new topology
+      await this.updateConnections();
+      
+      // Remember this topology and metrics snapshot to detect oscillation
+      this.lastTopologyRelayIds = [...relayNodeIds].sort();
+      this.snapshotMetrics();
+    } else {
+      console.log('[RelayMeshClient] Topology unchanged - no significant changes detected');
+    }
+  }
+
+  /**
+   * Check if metrics have changed significantly since last topology update
+   * Checks all metrics: bandwidth, NAT type, latency, packet loss, jitter, uptime, CPU
+   * Uses conservative thresholds to prevent topology thrashing
+   * @param threshold - Base percentage threshold (0.3 = 30%)
+   * @returns true if any participant's metrics have changed by more than threshold
+   */
+  private hasSignificantMetricChange(threshold: number): boolean {
+    for (const [participantId, metrics] of this.allMetrics) {
+      const lastMetrics = this.lastTopologyMetricsSnapshot.get(participantId);
+      if (!lastMetrics) {
+        // New participant
+        return true;
+      }
+      
+      // Check upload bandwidth change (30% relative threshold)
+      const uploadChange = Math.abs(metrics.bandwidth.uploadMbps - lastMetrics.uploadMbps) / 
+                          Math.max(lastMetrics.uploadMbps, 0.1);
+      if (uploadChange > threshold) {
+        console.log('[RelayMeshClient] Significant upload bandwidth change for', participantId, ':', 
+                   lastMetrics.uploadMbps, '->', metrics.bandwidth.uploadMbps, 
+                   '(', (uploadChange * 100).toFixed(1), '%)');
+        return true;
+      }
+      
+      // Check download bandwidth change (30% relative threshold)
+      const downloadChange = Math.abs(metrics.bandwidth.downloadMbps - lastMetrics.downloadMbps) / 
+                            Math.max(lastMetrics.downloadMbps, 0.1);
+      if (downloadChange > threshold) {
+        console.log('[RelayMeshClient] Significant download bandwidth change for', participantId, ':', 
+                   lastMetrics.downloadMbps, '->', metrics.bandwidth.downloadMbps, 
+                   '(', (downloadChange * 100).toFixed(1), '%)');
+        return true;
+      }
+      
+      // Check NAT type change (any change is significant)
+      if (metrics.natType !== lastMetrics.natType) {
+        console.log('[RelayMeshClient] NAT type changed for', participantId, ':', 
+                   lastMetrics.natType, '->', metrics.natType);
+        return true;
+      }
+      
+      // Check latency change (absolute change > 60ms or relative change > 30%)
+      const latencyAbsChange = Math.abs(metrics.latency.averageRttMs - lastMetrics.latency);
+      const latencyRelChange = latencyAbsChange / Math.max(lastMetrics.latency, 10);
+      if (latencyAbsChange > 60 || latencyRelChange > threshold) {
+        console.log('[RelayMeshClient] Significant latency change for', participantId, ':', 
+                   lastMetrics.latency, '->', metrics.latency.averageRttMs, 'ms',
+                   '(', (latencyRelChange * 100).toFixed(1), '%)');
+        return true;
+      }
+      
+      // Check packet loss change (absolute change > 5% or relative change > 30%)
+      const packetLossAbsChange = Math.abs(metrics.stability.packetLossPercent - lastMetrics.packetLoss);
+      const packetLossRelChange = packetLossAbsChange / Math.max(lastMetrics.packetLoss, 0.1);
+      if (packetLossAbsChange > 5 || packetLossRelChange > threshold) {
+        console.log('[RelayMeshClient] Significant packet loss change for', participantId, ':', 
+                   lastMetrics.packetLoss, '->', metrics.stability.packetLossPercent, '%',
+                   '(', (packetLossRelChange * 100).toFixed(1), '%)');
+        return true;
+      }
+      
+      // Check jitter change (absolute change > 30ms or relative change > 30%)
+      const jitterAbsChange = Math.abs(metrics.stability.jitterMs - lastMetrics.jitter);
+      const jitterRelChange = jitterAbsChange / Math.max(lastMetrics.jitter, 1);
+      if (jitterAbsChange > 30 || jitterRelChange > threshold) {
+        console.log('[RelayMeshClient] Significant jitter change for', participantId, ':', 
+                   lastMetrics.jitter, '->', metrics.stability.jitterMs, 'ms',
+                   '(', (jitterRelChange * 100).toFixed(1), '%)');
+        return true;
+      }
+      
+      // Check CPU usage change (absolute change > 25% or relative change > 40%)
+      // Higher thresholds for CPU since it fluctuates frequently
+      const cpuAbsChange = Math.abs(metrics.device.cpuUsagePercent - lastMetrics.cpuUsage);
+      const cpuRelChange = cpuAbsChange / Math.max(lastMetrics.cpuUsage, 1);
+      // TODO: Look into this
+      // if (cpuAbsChange > 50 || cpuRelChange > 0.8) {
+      //   console.log('[RelayMeshClient] Significant CPU usage change for', participantId, ':', 
+      //              lastMetrics.cpuUsage, '->', metrics.device.cpuUsagePercent, '%',
+      //              '(', (cpuRelChange * 100).toFixed(1), '%)');
+      //   return true;
+      // }
+      
+      // Note: Connection uptime always increases, so we don't check it for changes
+      // Note: Reconnection count increase would be caught by other metrics degrading
+    }
+    
+    // Check for deleted participants
+    for (const participantId of this.lastTopologyMetricsSnapshot.keys()) {
+      if (!this.allMetrics.has(participantId)) {
+        console.log('[RelayMeshClient] Participant left:', participantId);
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Snapshot current metrics for comparison
+   */
+  private snapshotMetrics(): void {
+    this.lastTopologyMetricsSnapshot.clear();
+    for (const [participantId, metrics] of this.allMetrics) {
+      this.lastTopologyMetricsSnapshot.set(participantId, {
+        uploadMbps: metrics.bandwidth.uploadMbps,
+        downloadMbps: metrics.bandwidth.downloadMbps,
+        natType: metrics.natType,
+        latency: metrics.latency.averageRttMs,
+        packetLoss: metrics.stability.packetLossPercent,
+        jitter: metrics.stability.jitterMs,
+        uptime: metrics.stability.connectionUptime,
+        cpuUsage: metrics.device.cpuUsagePercent,
+      });
     }
   }
   /**
@@ -635,6 +879,7 @@ export class RelayMeshClient extends EventEmitter {
     }
 
     console.log('[RelayMeshClient] Participant ID:', participantId);
+    console.log('[RelayMeshClient] All metrics participants:', Array.from(this.allMetrics.keys()));
 
     // Get local stream
     const localStream = this.mediaHandler.getLocalStream();
@@ -654,6 +899,7 @@ export class RelayMeshClient extends EventEmitter {
     console.log('[RelayMeshClient] Current connections:', currentConnections);
     for (const remoteId of currentConnections) {
       if (!targetConnections.includes(remoteId)) {
+        console.log('[RelayMeshClient] Closing connection to:', remoteId);
         this.mediaHandler.closePeerConnection(remoteId);
       }
     }
@@ -704,6 +950,10 @@ export class RelayMeshClient extends EventEmitter {
     }
 
     const isRelay = this.currentTopology.relayNodes.includes(participantId);
+    
+    console.log('[RelayMeshClient] getTargetConnections for:', participantId);
+    console.log('[RelayMeshClient] Is relay:', isRelay);
+    console.log('[RelayMeshClient] Topology groups:', JSON.stringify(this.currentTopology.groups, null, 2));
 
     // Special case: P2P mode (no relay nodes)
     if (this.currentTopology.relayNodes.length === 0) {
@@ -726,12 +976,18 @@ export class RelayMeshClient extends EventEmitter {
       const otherRelays = this.currentTopology.relayNodes.filter((id) => id !== participantId);
       const group = this.currentTopology.groups.find((g) => g.relayNodeId === participantId);
       const groupMembers = group?.regularNodeIds || [];
+      
+      console.log('[RelayMeshClient] Relay connections - other relays:', otherRelays, 'group members:', groupMembers);
+      
       return [...otherRelays, ...groupMembers];
     } else {
       // Regular nodes connect only to their assigned relay
       const group = this.currentTopology.groups.find((g) =>
         g.regularNodeIds.includes(participantId)
       );
+      
+      console.log('[RelayMeshClient] Regular node - assigned group:', group);
+      
       return group ? [group.relayNodeId] : [];
     }
   }
@@ -789,7 +1045,7 @@ export class RelayMeshClient extends EventEmitter {
     }
 
   /**
-   * Handle incoming WebRTC offer
+   * Handle incoming WebRTC offer using Perfect Negotiation pattern
    */
   private async handleWebRTCOffer(message: any): Promise<void> {
     if (!this.mediaHandler) {
@@ -800,28 +1056,14 @@ export class RelayMeshClient extends EventEmitter {
     console.log('[RelayMeshClient] Received WebRTC offer from:', message.from);
 
     try {
-      // Check if we already have a peer connection (we might have sent an offer too)
       const peerConnections = this.mediaHandler.getPeerConnections();
       let peerConnection = peerConnections.get(message.from);
       
-      // If we have a peer connection and we're in have-local-offer state,
-      // we have an offer/answer collision. Use tie-breaker based on participant IDs.
-      if (peerConnection && peerConnection.signalingState === 'have-local-offer') {
-        console.log('[RelayMeshClient] Offer collision detected');
-        
-        const myId = this.stateMachine.getParticipantId() || '';
-        const theirId = message.from;
-        
-        // Use lexicographic comparison as tie-breaker
-        // Lower ID wins and keeps their offer, higher ID rolls back
-        if (myId < theirId) {
-          console.log('[RelayMeshClient] We win tie-breaker, ignoring their offer');
-          return; // Ignore their offer, they will process our offer
-        } else {
-          console.log('[RelayMeshClient] They win tie-breaker, rolling back our offer');
-          await peerConnection.setLocalDescription({type: 'rollback'} as any);
-        }
-      }
+      const myId = this.stateMachine.getParticipantId() || '';
+      const theirId = message.from;
+      
+      // Perfect negotiation: determine politeness based on ID comparison
+      const polite = myId > theirId;
       
       // Get or create peer connection
       if (!peerConnection) {
@@ -847,6 +1089,15 @@ export class RelayMeshClient extends EventEmitter {
         }
       }
 
+      // Perfect negotiation: handle offer collision
+      const offerCollision = peerConnection.signalingState !== 'stable';
+      
+      const ignoreOffer = !polite && offerCollision;
+      if (ignoreOffer) {
+        console.log('[RelayMeshClient] Impolite peer ignoring offer due to collision');
+        return;
+      }
+
       // Set remote description (the offer)
       await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
 
@@ -862,7 +1113,6 @@ export class RelayMeshClient extends EventEmitter {
       console.error('[RelayMeshClient] Error handling WebRTC offer:', error);
     }
   }
-
   /**
    * Handle incoming WebRTC answer
    */
@@ -940,5 +1190,42 @@ export class RelayMeshClient extends EventEmitter {
     const sortedA = [...a].sort();
     const sortedB = [...b].sort();
     return sortedA.every((val, idx) => val === sortedB[idx]);
+  }
+
+  /**
+   * Compare two topologies for equality
+   * Checks relay nodes and group assignments
+   */
+  private topologyEquals(a: ConnectionTopology | null, b: ConnectionTopology): boolean {
+    if (!a) return false;
+    
+    // Compare relay nodes
+    if (!this.arraysEqual(a.relayNodes, b.relayNodes)) {
+      return false;
+    }
+    
+    // Compare groups
+    if (a.groups.length !== b.groups.length) {
+      return false;
+    }
+    
+    // Sort groups by relay ID for consistent comparison
+    const sortedGroupsA = [...a.groups].sort((x, y) => x.relayNodeId.localeCompare(y.relayNodeId));
+    const sortedGroupsB = [...b.groups].sort((x, y) => x.relayNodeId.localeCompare(y.relayNodeId));
+    
+    for (let i = 0; i < sortedGroupsA.length; i++) {
+      const groupA = sortedGroupsA[i];
+      const groupB = sortedGroupsB[i];
+      
+      if (groupA.relayNodeId !== groupB.relayNodeId) {
+        return false;
+      }
+      
+      if (!this.arraysEqual(groupA.regularNodeIds, groupB.regularNodeIds)) {
+        return false;
+      }
+    }
+    
+    return true;
   }
 }

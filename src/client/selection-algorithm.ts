@@ -182,8 +182,15 @@ export class SelectionAlgorithm {
       }
     }
 
-    // Sort by total score (descending) and select top N
-    eligibleScores.sort((a, b) => b.totalScore - a.totalScore);
+    // Sort by total score (descending), then by participant ID (ascending) for deterministic ordering
+    // This ensures that when scores are equal (e.g., placeholder metrics), we always pick the same participants
+    eligibleScores.sort((a, b) => {
+      if (b.totalScore !== a.totalScore) {
+        return b.totalScore - a.totalScore;
+      }
+      // Tie-breaker: sort by participant ID for deterministic selection
+      return a.participantId.localeCompare(b.participantId);
+    });
 
     // Return top N participant IDs
     const selectedCount = Math.min(optimalRelayCount, eligibleScores.length);
