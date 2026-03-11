@@ -401,11 +401,16 @@
         }
 
         function addVideoElement(stream, participantId, label, isLocal = false) {
+            console.log('[addVideoElement] Called with:', { participantId, label, isLocal, hasStream: !!stream });
+            
             // Check if video element already exists for this participant
             if (!isLocal && remoteVideoElements.has(participantId)) {
+                console.log('[addVideoElement] Video element already exists for:', participantId);
                 log(`Video element already exists for ${participantId}`, 'info');
                 return remoteVideoElements.get(participantId);
             }
+            
+            console.log('[addVideoElement] Creating new video element for:', participantId);
             
             const container = document.createElement('div');
             container.className = `video-container ${isLocal ? 'local-video' : ''}`;
@@ -416,6 +421,15 @@
             video.autoplay = true;
             video.playsInline = true;
             if (isLocal) video.muted = true;
+            
+            // Handle play promise to avoid autoplay issues
+            video.play().then(() => {
+                console.log('[addVideoElement] Video playing for:', participantId);
+            }).catch(err => {
+                console.error('[addVideoElement] Error playing video for:', participantId, err);
+            });
+            
+            console.log('[addVideoElement] Video element created, stream tracks:', stream.getTracks().length);
 
             const labelDiv = document.createElement('div');
             labelDiv.className = 'video-label';
@@ -430,10 +444,13 @@
             } else {
                 elements.videos.appendChild(container);
             }
+            
+            console.log('[addVideoElement] Video element added to DOM');
 
             // Track remote video elements with label reference
             if (!isLocal) {
                 remoteVideoElements.set(participantId, { container, video, label: labelDiv });
+                console.log('[addVideoElement] Tracked remote video element, total remote videos:', remoteVideoElements.size);
             }
 
             return container;
@@ -725,6 +742,63 @@
                     }
                     
                     refreshStatus();
+                });
+
+                // Handle role changes - clear processed streams to allow re-processing after reconnection
+                client.on('roleChange', (role) => {
+                    log(`Role changed to: ${role} - clearing stream cache`, 'info');
+                    console.log('[roleChange] Clearing processedStreams cache to allow stream re-processing');
+                    
+                    // Clear processed streams so that when connections are recreated,
+                    // we can process the streams again (they'll have the same IDs)
+                    processedStreams.clear();
+                    
+                    // Also clear remote video and audio elements so they can be recreated
+                    // Keep track of which participants we had so we can log it
+                    const participantIds = Array.from(remoteVideoElements.keys());
+                    console.log('[roleChange] Clearing remote media elements for participants:', participantIds);
+                    
+                    // Remove all remote video elements
+                    for (const [participantId, element] of remoteVideoElements) {
+                        element.video.srcObject = null;
+                        element.container.remove();
+                    }
+                    remoteVideoElements.clear();
+                    
+                    // Remove all remote audio elements
+                    for (const [participantId, element] of remoteAudioElements) {
+                        element.audio.srcObject = null;
+                        element.container.remove();
+                    }
+                    remoteAudioElements.clear();
+                    
+                    log('Cleared all remote media elements - will recreate on reconnection', 'info');
+                });
+
+                // Handle connection recreation (when relay recreates connections for forwarding)
+                client.on('connectionsRecreating', () => {
+                    console.log('[connectionsRecreating] Clearing processedStreams cache for connection recreation');
+                    
+                    // Clear processed streams so they can be re-processed after reconnection
+                    processedStreams.clear();
+                    
+                    // Also clear remote media elements
+                    const participantIds = Array.from(remoteVideoElements.keys());
+                    console.log('[connectionsRecreating] Clearing remote media elements for participants:', participantIds);
+                    
+                    // Remove all remote video elements
+                    for (const [participantId, element] of remoteVideoElements) {
+                        element.video.srcObject = null;
+                        element.container.remove();
+                    }
+                    remoteVideoElements.clear();
+                    
+                    // Remove all remote audio elements
+                    for (const [participantId, element] of remoteAudioElements) {
+                        element.audio.srcObject = null;
+                        element.container.remove();
+                    }
+                    remoteAudioElements.clear();
                 });
 
                 // Debug: Monitor all client events

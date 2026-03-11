@@ -263,6 +263,12 @@ export class SelectionAlgorithm {
    * @returns Optimal number of relay nodes
    */
   calculateOptimalRelayCount(participantCount: number): number {
+    // Special case: with 2 participants, only 1 relay is needed
+    // (one relay, one regular node connected to it)
+    if (participantCount <= 2) {
+      return 1;
+    }
+    
     return Math.ceil(Math.sqrt(participantCount));
   }
 

@@ -43,6 +43,7 @@ export class MediaHandler {
   private connectionRetries: Map<string, number> = new Map(); // Track retry attempts
   private retryTimeouts: Map<string, NodeJS.Timeout> = new Map(); // Track retry timers
   private emittedStreams: Set<string> = new Set(); // Track which streams we've already emitted
+  private remoteStreams: Map<string, globalThis.MediaStream> = new Map(); // Track remote streams for relay forwarding
 
   constructor(localParticipantId: string) {
     this.localParticipantId = localParticipantId;
@@ -227,9 +228,63 @@ export class MediaHandler {
     }
 
     // Add each track from the local stream to the peer connection
+    // Check if track is already added to avoid "sender already exists" error
     this.localStream.getTracks().forEach((track) => {
-      this.localStream && peerConnection.addTrack(track, this.localStream);
+      // Check if this track is already being sent on this peer connection
+      const senders = peerConnection.getSenders();
+      const trackAlreadyAdded = senders.some(sender => sender.track === track);
+      
+      if (!trackAlreadyAdded && this.localStream) {
+        peerConnection.addTrack(track, this.localStream);
+      }
     });
+  }
+  /**
+   * Add remote stream tracks to peer connection for relay forwarding
+   * Used by relay nodes to forward streams from one participant to others
+   *
+   * @param peerConnection - The peer connection to add tracks to
+   * @param remoteStream - The remote MediaStream to forward
+   */
+  addRemoteStreamForRelay(peerConnection: RTCPeerConnection, remoteStream: globalThis.MediaStream): void {
+    // Add each track from the remote stream to the peer connection
+    // Check if track is already added to avoid "sender already exists" error
+    remoteStream.getTracks().forEach((track) => {
+      // Check if this track is already being sent on this peer connection
+      const senders = peerConnection.getSenders();
+      const trackAlreadyAdded = senders.some(sender => sender.track === track);
+      
+      if (!trackAlreadyAdded) {
+        peerConnection.addTrack(track, remoteStream);
+      }
+    });
+  }
+  /**
+   * Get all remote streams (for relay forwarding)
+   * Returns a map of participant IDs to their MediaStreams
+   *
+   * @returns Map of participant IDs to remote streams
+   */
+  getRemoteStreams(): Map<string, globalThis.MediaStream> {
+    return new Map(this.remoteStreams);
+  }
+  /**
+   * Get list of connected peer IDs
+   *
+   * @returns Array of participant IDs with active connections
+   */
+  getConnectedPeers(): string[] {
+    return Array.from(this.peerConnections.keys());
+  }
+
+  /**
+   * Get a specific peer connection
+   *
+   * @param participantId - ID of the participant
+   * @returns The peer connection or undefined if not found
+   */
+  getPeerConnection(participantId: string): RTCPeerConnection | undefined {
+    return this.peerConnections.get(participantId);
   }
 
   /**
@@ -486,6 +541,9 @@ export class MediaHandler {
       const remoteStream = event.streams[0];
 
       if (remoteStream) {
+        // Store the remote stream for relay forwarding
+        this.remoteStreams.set(remoteParticipantId, remoteStream);
+        
         // Create a unique key for this stream
         const streamKey = `${remoteParticipantId}-${remoteStream.id}`;
         
@@ -540,6 +598,8 @@ export class MediaHandler {
         // Disconnected state may recover, so we don't immediately retry
       } else if (state === 'closed') {
         console.log(`Peer connection to ${remoteParticipantId} closed`);
+        // Clean up when connection is closed
+        this.remoteStreams.delete(remoteParticipantId);
       }
     };
 
