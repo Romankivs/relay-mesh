@@ -310,6 +310,15 @@
         console.log('[Simple Client] Version 1.2.4 - Join muted by default');
         console.log('[Simple Client] Checking for getLocalStream method...');
         
+        // Generate random username on page load
+        const adjectives = ['Happy', 'Clever', 'Brave', 'Swift', 'Bright', 'Cool', 'Smart', 'Quick', 'Bold', 'Wise'];
+        const nouns = ['Panda', 'Tiger', 'Eagle', 'Dolphin', 'Fox', 'Wolf', 'Bear', 'Hawk', 'Lion', 'Owl'];
+        const randomAdjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+        const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+        const randomNumber = Math.floor(Math.random() * 100);
+        const randomUsername = `${randomAdjective}${randomNoun}${randomNumber}`;
+        document.getElementById('userName').value = randomUsername;
+        
         // Verify the method exists
         const testClient = new RelayMeshClient({
             signalingServerUrl: 'ws://test',
