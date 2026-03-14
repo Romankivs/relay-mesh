@@ -189,17 +189,15 @@ export class RelayMeshClient extends EventEmitter {
             // - 2-person (1 relay + 1 regular): totalPeers = 1, hasOtherRelays = false, shouldForward = false
             // - 3-person (2 relays, one with 1 member, one with 0): hasOtherRelays = true, shouldForward = true
             // - 3-person (1 relay + 2 regulars): totalPeers = 2, shouldForward = true
-            if (connectedPeers.length > 0 && shouldForward && !this.isRecreatingConnections) {
+            if (connectedPeers.length > 0 && shouldForward) {
               console.log('[RelayMeshClient] ✓ Relay forwarding new stream to connected peers');
               // Forward the new stream directly to all connected peers via renegotiation.
               // This avoids tearing down and rebuilding connections unnecessarily.
+              // Note: we do NOT check isRecreatingConnections here — forwarding is safe
+              // even during connection recreation (it just adds tracks to existing connections).
               this.forwardNewStreamToConnectedPeers(stream);
             } else {
-              if (this.isRecreatingConnections) {
-                console.log('[RelayMeshClient] ✗ Already recreating connections, skipping');
-              } else {
-                console.log('[RelayMeshClient] ✗ Relay will NOT forward stream - no forwarding needed (2-person conference)');
-              }
+              console.log('[RelayMeshClient] ✗ Relay will NOT forward stream - no forwarding needed (2-person conference)');
             }
           } else {
             console.log('[RelayMeshClient] Stream already seen, skipping forwarding check');
@@ -999,44 +997,63 @@ export class RelayMeshClient extends EventEmitter {
        */
       private forwardNewStreamToConnectedPeers(stream: import('./media-handler').MediaStream): void {
         if (!this.mediaHandler) {
+          console.warn('[RelayMeshClient] forwardNewStreamToConnectedPeers: no mediaHandler');
           return;
         }
 
         const remoteStreams = this.mediaHandler.getRemoteStreams();
+        console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: remoteStreams keys=[${Array.from(remoteStreams.keys()).join(', ')}]`);
         const sourceStream = remoteStreams.get(stream.participantId);
 
         if (!sourceStream) {
-          console.warn(`[RelayMeshClient] Cannot forward stream - source stream not found for ${stream.participantId}`);
+          console.warn(`[RelayMeshClient] forwardNewStreamToConnectedPeers: source stream NOT FOUND for ${stream.participantId} - remoteStreams has ${remoteStreams.size} entries`);
           return;
         }
 
+        console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: sourceStream id=${sourceStream.id} tracks=${sourceStream.getTracks().map(t => t.kind).join(',')}`);
+
         const connectedPeers = this.mediaHandler.getConnectedPeers();
-        console.log(`[RelayMeshClient] Forwarding new stream from ${stream.participantId} to ${connectedPeers.length} connected peers`);
+        console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: forwarding stream from ${stream.participantId} to peers=[${connectedPeers.join(', ')}]`);
 
         for (const peerId of connectedPeers) {
           // Don't forward a stream back to its source
-          if (peerId !== stream.participantId) {
-            const peerConnection = this.mediaHandler.getPeerConnection(peerId);
-            if (peerConnection) {
-              console.log(`[RelayMeshClient] Adding tracks from ${stream.participantId} to connection with ${peerId}`);
-              // Pass originalParticipantId so the receiver can attribute the stream correctly
-              this.mediaHandler.addRemoteStreamForRelay(peerConnection, sourceStream, stream.participantId);
+          if (peerId === stream.participantId) {
+            console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: skipping source peer ${peerId}`);
+            continue;
+          }
 
-              // Build the full stream map for this peer (all forwarded streams, not just the new one)
-              const streamMap: Record<string, string> = {};
-              for (const [sourceId, remoteStream] of remoteStreams.entries()) {
-                if (sourceId !== peerId) {
-                  streamMap[remoteStream.id] = sourceId;
-                }
-              }
+          const peerConnection = this.mediaHandler.getPeerConnection(peerId);
+          if (!peerConnection) {
+            console.warn(`[RelayMeshClient] forwardNewStreamToConnectedPeers: no peerConnection for ${peerId}`);
+            continue;
+          }
 
-              // Send updated stream map so the receiver knows all stream→participant mappings
-              this.mediaHandler.sendRelayStreamMap(peerId, peerConnection, streamMap);
+          console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: adding tracks to ${peerId}, signalingState=${peerConnection.signalingState}, connectionState=${peerConnection.connectionState}`);
 
-              // Renegotiate the connection to add the new tracks
-              this.renegotiateConnection(peerId, peerConnection);
+          // Check existing senders before adding
+          const sendersBefore = peerConnection.getSenders().map(s => s.track?.kind ?? 'null');
+          console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: senders before=[${sendersBefore.join(', ')}]`);
+
+          // Pass originalParticipantId so the receiver can attribute the stream correctly
+          this.mediaHandler.addRemoteStreamForRelay(peerConnection, sourceStream, stream.participantId);
+
+          const sendersAfter = peerConnection.getSenders().map(s => s.track?.kind ?? 'null');
+          console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: senders after=[${sendersAfter.join(', ')}]`);
+
+          // Build the full stream map for this peer (all forwarded streams, not just the new one)
+          const streamMap: Record<string, string> = {};
+          for (const [sourceId, remoteStream] of remoteStreams.entries()) {
+            if (sourceId !== peerId) {
+              streamMap[remoteStream.id] = sourceId;
             }
           }
+          console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: streamMap for ${peerId}=`, streamMap);
+
+          // Send updated stream map so the receiver knows all stream→participant mappings
+          this.mediaHandler.sendRelayStreamMap(peerId, peerConnection, streamMap);
+
+          // Renegotiate the connection to add the new tracks
+          this.renegotiateConnection(peerId, peerConnection);
         }
       }
 
@@ -1058,16 +1075,17 @@ export class RelayMeshClient extends EventEmitter {
       }
 
       try {
-        console.log(`[RelayMeshClient] Renegotiating connection with ${peerId}`);
+        console.log(`[RelayMeshClient] renegotiateConnection: peerId=${peerId} signalingState=${peerConnection.signalingState} connectionState=${peerConnection.connectionState}`);
         if (peerConnection.signalingState !== 'stable') {
-          console.log(`[RelayMeshClient] Skipping renegotiation with ${peerId} - signaling state: ${peerConnection.signalingState}`);
+          console.log(`[RelayMeshClient] renegotiateConnection: SKIPPED for ${peerId} - not stable (state=${peerConnection.signalingState})`);
           return;
         }
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
         this.signalingClient.sendWebRTCOffer(peerId, offer);
+        console.log(`[RelayMeshClient] renegotiateConnection: offer sent to ${peerId}`);
       } catch (error) {
-        console.error(`[RelayMeshClient] Failed to renegotiate connection with ${peerId}:`, error);
+        console.error(`[RelayMeshClient] renegotiateConnection: FAILED for ${peerId}:`, error);
       }
     }
 
