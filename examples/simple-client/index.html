@@ -305,7 +305,7 @@
 
     <script type="module">
         // Using the ES module browser bundle (with cache buster)
-        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=33';
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=40';
 
         console.log('[Simple Client] Version 1.2.4 - Join muted by default');
         console.log('[Simple Client] Checking for getLocalStream method...');
@@ -352,6 +352,9 @@
             getElements: () => elements,
             getIsMuted: () => isMuted
         };
+        // Expose client globally for console debugging
+        // Usage: debugClient.mediaHandler.getRemoteStreams(), debugClient.mediaHandler.getPendingStreams()
+        window.debugClient = () => client;
 
         const elements = {
             serverUrl: document.getElementById('serverUrl'),
@@ -750,6 +753,10 @@
                     const myInfo = client.getConferenceInfo();
                     const myShortId = myInfo?.participantId?.slice(-8) ?? '?';
                     console.log(`%c[MY ID: ${myShortId}] ROLE CHANGED → ${role}`, 'background:#222;color:#ff0;font-size:14px;padding:4px');
+                    // Update title on role change
+                    const myName = myInfo?.participantId ? (participantNames.get(myInfo.participantId) || elements.userName.value) : elements.userName.value;
+                    document.title = `[${role.toUpperCase()}] ${myName} (${myShortId})`;
+                    document.querySelector('h1').textContent = `🎥 ${myName} — ${role.toUpperCase()} (${myShortId})`;
                     console.log('[roleChange] Clearing processedStreams cache to allow stream re-processing');
                     
                     // Clear processed streams so that when connections are recreated,
@@ -848,6 +855,9 @@
                 // Prominent log so user knows which tab is which
                 const shortId = info.participantId.slice(-8);
                 console.log(`%c[MY ID: ${shortId}] role=${info.role} name=${elements.userName.value} fullId=${info.participantId}`, 'background:#222;color:#0f0;font-size:14px;padding:4px');
+                // Update page title and header so tabs are easy to identify at a glance
+                document.title = `[${info.role.toUpperCase()}] ${elements.userName.value} (${shortId})`;
+                document.querySelector('h1').textContent = `🎥 ${elements.userName.value} — ${info.role.toUpperCase()} (${shortId})`;
                 console.log('[DEBUG] Join completed, getting local stream...');
                 
                 // Get local stream and setup audio monitoring

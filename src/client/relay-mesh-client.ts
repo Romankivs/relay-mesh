@@ -62,6 +62,7 @@ export class RelayMeshClient extends EventEmitter {
   private forwardedStreamIds: Set<string> = new Set(); // Track streams we're already forwarding
   private isRecreatingConnections: boolean = false; // Prevent infinite loop when recreating connections
   private pendingIceCandidates: Map<string, RTCIceCandidateInit[]> = new Map(); // Queue ICE candidates until remote description is set
+  private streamMapRefreshInterval: NodeJS.Timeout | null = null; // Periodic stream map refresh for relay nodes
   // Short ID for log prefixing — set once participantId is known
   private logId: string = '?';
 
@@ -165,6 +166,7 @@ export class RelayMeshClient extends EventEmitter {
           // Only trigger reconnection if this is a NEW stream we haven't seen before
           if (!this.forwardedStreamIds.has(streamKey)) {
             console.log(`[RMC:${this.logId}] Relay received NEW stream ${streamKey}, checking forwarding`);
+            console.log(`[RMC:${this.logId}] forwardedStreamIds=[${Array.from(this.forwardedStreamIds).join(', ')}]`);
             this.forwardedStreamIds.add(streamKey);
             
             // Check if we have peers to forward to
@@ -197,6 +199,36 @@ export class RelayMeshClient extends EventEmitter {
       // Set up ICE candidate handler
       this.mediaHandler.onICECandidate((remoteParticipantId, candidate) => {
         this.signalingClient.sendICECandidate(remoteParticipantId, candidate);
+      });
+
+      // When a stream resolves (pending→attributed), relay nodes send updated stream maps
+      // to all connected peers so they can re-attribute any already-emitted streams.
+      this.mediaHandler.onStreamResolved((resolvedParticipantId, resolvedStream) => {
+        if (this.currentRole !== 'relay' || !this.mediaHandler) return;
+        const myId = this.stateMachine.getParticipantId();
+        if (!myId) return;
+
+        const connectedPeers = this.mediaHandler.getConnectedPeers();
+        const remoteStreams = this.mediaHandler.getRemoteStreams();
+        console.log(`[RMC:${this.logId}][streamResolved] ${resolvedParticipantId} resolved, sending updated maps to ${connectedPeers.length} peers`);
+
+        for (const peerId of connectedPeers) {
+          if (peerId === resolvedParticipantId) continue;
+          const pc = this.mediaHandler.getPeerConnection(peerId);
+          if (!pc) continue;
+
+          // Build full stream map for this peer
+          const streamMap: Record<string, string> = {};
+          for (const [sourceId, stream] of remoteStreams.entries()) {
+            if (sourceId !== peerId) {
+              streamMap[stream.id] = sourceId;
+            }
+          }
+          if (Object.keys(streamMap).length > 0) {
+            console.log(`[RMC:${this.logId}][streamResolved] sending updated map to ${peerId.slice(-8)}:`, streamMap);
+            this.mediaHandler.sendRelayStreamMap(peerId, pc, streamMap);
+          }
+        }
       });
 
       // Connect to signaling server
@@ -285,6 +317,11 @@ export class RelayMeshClient extends EventEmitter {
       if (this.metricsUpdateInterval) {
         clearInterval(this.metricsUpdateInterval);
         this.metricsUpdateInterval = null;
+      }
+
+      if (this.streamMapRefreshInterval) {
+        clearInterval(this.streamMapRefreshInterval);
+        this.streamMapRefreshInterval = null;
       }
 
       // Send leave message
@@ -537,6 +574,8 @@ export class RelayMeshClient extends EventEmitter {
     const newRole = participantId && message.topology.relayNodes.includes(participantId) ? 'relay' : 'regular';
     
     this.currentTopology = message.topology;
+    // Sync lastTopologyRelayIds so non-leaders don't perpetually see relayNodesChanged=true
+    this.lastTopologyRelayIds = [...message.topology.relayNodes].sort();
     this.emit('topologyUpdate', message.topology);
     
     // Emit role change event if role changed
@@ -574,9 +613,17 @@ export class RelayMeshClient extends EventEmitter {
       if (newRole === 'relay' && !this.relayEngine) {
         this.relayEngine = new RelayEngine();
         this.relayEngine.startRelay();
+        // Start periodic stream map refresh so regular nodes get late-arriving streams
+        if (!this.streamMapRefreshInterval) {
+          this.streamMapRefreshInterval = setInterval(() => this.broadcastStreamMaps(), 1000);
+        }
       } else if (newRole === 'regular' && this.relayEngine) {
         this.relayEngine.stopRelay();
         this.relayEngine = null;
+        if (this.streamMapRefreshInterval) {
+          clearInterval(this.streamMapRefreshInterval);
+          this.streamMapRefreshInterval = null;
+        }
       }
       
       // updateConnections() below will diff current vs target connections and
@@ -683,6 +730,9 @@ export class RelayMeshClient extends EventEmitter {
       // Initialize relay engine
       this.relayEngine = new RelayEngine();
       this.relayEngine.startRelay();
+      if (!this.streamMapRefreshInterval) {
+        this.streamMapRefreshInterval = setInterval(() => this.broadcastStreamMaps(), 1000);
+      }
     } else if (this.relayEngine) {
       // Stop relay engine if we were demoted
       this.relayEngine.stopRelay();
@@ -807,9 +857,16 @@ export class RelayMeshClient extends EventEmitter {
         if (newRole === 'relay' && !this.relayEngine) {
           this.relayEngine = new RelayEngine();
           this.relayEngine.startRelay();
+          if (!this.streamMapRefreshInterval) {
+            this.streamMapRefreshInterval = setInterval(() => this.broadcastStreamMaps(), 1000);
+          }
         } else if (newRole === 'regular' && this.relayEngine) {
           this.relayEngine.stopRelay();
           this.relayEngine = null;
+          if (this.streamMapRefreshInterval) {
+            clearInterval(this.streamMapRefreshInterval);
+            this.streamMapRefreshInterval = null;
+          }
         }
         
         // updateConnections() below will diff current vs target connections and
@@ -947,6 +1004,36 @@ export class RelayMeshClient extends EventEmitter {
     }
   }
   /**
+   * Broadcast the current stream map to all connected peers.
+   * Called periodically on relay nodes to ensure late-arriving streams get attributed correctly.
+   */
+  private broadcastStreamMaps(): void {
+    if (this.currentRole !== 'relay' || !this.mediaHandler) return;
+    const remoteStreams = this.mediaHandler.getRemoteStreams();
+    const pendingStreams = this.mediaHandler.getPendingStreams();
+    const connectedPeers = this.mediaHandler.getConnectedPeers();
+
+    // Detailed diagnostic log every tick
+    console.log(`[RMC:${this.logId}][bcast] remoteStreams=[${Array.from(remoteStreams.entries()).map(([id, s]) => `${id.slice(-8)}→${s.id.slice(0,8)}`).join(', ')}] pending=[${Array.from(pendingStreams.entries()).map(([sid, p]) => `${sid.slice(0,8)}←${p.connectionId.slice(-8)}`).join(', ')}] peers=[${connectedPeers.map(p => p.slice(-8)).join(', ')}]`);
+
+    if (remoteStreams.size === 0 && pendingStreams.size === 0) return;
+
+    for (const peerId of connectedPeers) {
+      const pc = this.mediaHandler.getPeerConnection(peerId);
+      if (!pc) continue;
+      const streamMap: Record<string, string> = {};
+      for (const [sourceId, stream] of remoteStreams.entries()) {
+        if (sourceId !== peerId) {
+          streamMap[stream.id] = sourceId;
+        }
+      }
+      if (Object.keys(streamMap).length > 0) {
+        this.mediaHandler.sendRelayStreamMap(peerId, pc, streamMap);
+      }
+    }
+  }
+
+  /**
    * Update relay selection data for monitoring without triggering topology changes
    * This is useful when we want to refresh the monitoring dashboard data
    * without disrupting existing connections
@@ -993,6 +1080,7 @@ export class RelayMeshClient extends EventEmitter {
 
         const remoteStreams = this.mediaHandler.getRemoteStreams();
         console.log(`${tag} remoteStreams keys=[${Array.from(remoteStreams.keys()).join(', ')}]`);
+        console.log(`${tag} forwardedStreamIds=[${Array.from(this.forwardedStreamIds).join(', ')}]`);
         const sourceStream = remoteStreams.get(stream.participantId);
 
         if (!sourceStream) {
@@ -1029,6 +1117,13 @@ export class RelayMeshClient extends EventEmitter {
           for (const [sourceId, remoteStream] of remoteStreams.entries()) {
             if (sourceId !== peerId) {
               streamMap[remoteStream.id] = sourceId;
+            }
+          }
+          // Also include pending streams (not yet in remoteStreams) so receiver gets full picture
+          const pendingStreams = this.mediaHandler.getPendingStreams();
+          for (const [nativeStreamId, pending] of pendingStreams.entries()) {
+            if (pending.connectionId !== peerId && !(nativeStreamId in streamMap)) {
+              streamMap[nativeStreamId] = pending.connectionId;
             }
           }
           console.log(`${tag} → ${peerId} streamMap=`, streamMap);
@@ -1180,7 +1275,12 @@ export class RelayMeshClient extends EventEmitter {
     // Establish new connections and add local stream
     const peerConfig = this.buildPeerConnectionConfig();
     for (const remoteId of targetConnections) {
-      if (!currentConnections.includes(remoteId)) {
+      if (currentConnections.includes(remoteId)) {
+        const pc = this.mediaHandler.getPeerConnection(remoteId);
+        console.log(`[RelayMeshClient] Already connected to ${remoteId.slice(-8)}, signalingState=${pc?.signalingState} connectionState=${pc?.connectionState} senders=${pc?.getSenders().length}`);
+        continue;
+      }
+      {
         console.log('[RelayMeshClient] Creating peer connection to:', remoteId);
         const peerConnection = await this.mediaHandler.createPeerConnection(remoteId, peerConfig);
         
@@ -1196,7 +1296,8 @@ export class RelayMeshClient extends EventEmitter {
         // If we're a relay node, also forward all remote streams to this peer
         if (this.currentRole === 'relay') {
           const remoteStreams = this.mediaHandler.getRemoteStreams();
-          console.log(`[RelayMeshClient] Relay mode: forwarding ${remoteStreams.size} remote streams to ${remoteId}`);
+          const pendingStreams = this.mediaHandler.getPendingStreams();
+          console.log(`[RelayMeshClient] Relay mode: forwarding ${remoteStreams.size} remote streams + ${pendingStreams.size} pending to ${remoteId}`);
           
           // Build stream-ID → original-participant-ID map to send over data channel
           const streamMap: Record<string, string> = {};
@@ -1204,9 +1305,24 @@ export class RelayMeshClient extends EventEmitter {
           for (const [sourceParticipantId, remoteStream] of remoteStreams.entries()) {
             // Don't forward a stream back to its source
             if (sourceParticipantId !== remoteId) {
-              console.log(`[RelayMeshClient] Forwarding stream from ${sourceParticipantId} to ${remoteId}`);
+              console.log(`[RelayMeshClient] Forwarding resolved stream from ${sourceParticipantId} to ${remoteId}`);
               this.mediaHandler.addRemoteStreamForRelay(peerConnection, remoteStream, sourceParticipantId);
               streamMap[remoteStream.id] = sourceParticipantId;
+            }
+          }
+
+          // Also forward pending streams (arrived but relay-stream-map not yet received).
+          // For relay-to-relay connections the stream is direct, so connectionId IS the participant ID.
+          for (const [nativeStreamId, pending] of pendingStreams.entries()) {
+            const sourceId = pending.connectionId; // best guess: the peer we received it from
+            if (sourceId !== remoteId) {
+              // Check if we already added this stream via remoteStreams
+              const alreadyAdded = Object.values(streamMap).includes(sourceId);
+              if (!alreadyAdded) {
+                console.log(`[RelayMeshClient] Forwarding pending stream from ${sourceId} (streamId=${nativeStreamId}) to ${remoteId}`);
+                this.mediaHandler.addRemoteStreamForRelay(peerConnection, pending.stream, sourceId);
+                streamMap[nativeStreamId] = sourceId;
+              }
             }
           }
 
