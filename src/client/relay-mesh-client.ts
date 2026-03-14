@@ -60,6 +60,8 @@ export class RelayMeshClient extends EventEmitter {
   }> = new Map();
   private makingOffer: Map<string, boolean> = new Map(); // Track ongoing offer creation per peer
   private forwardedStreamIds: Set<string> = new Set(); // Track streams we're already forwarding
+  private isRecreatingConnections: boolean = false; // Prevent infinite loop when recreating connections
+  private pendingIceCandidates: Map<string, RTCIceCandidateInit[]> = new Map(); // Queue ICE candidates until remote description is set
 
   constructor(config: RelayMeshClientConfig) {
     super();
@@ -170,25 +172,37 @@ export class RelayMeshClient extends EventEmitter {
             // Count total peers (group members + other relays)
             const totalPeers = (myGroup?.regularNodeIds.length || 0) + (this.currentTopology.relayNodes.length - 1);
             
+            // Use the same forwarding logic as updateConnections()
+            // This handles the 2-relay scenario where one relay has an empty group
+            const shouldForward = (totalPeers > 1 || hasOtherRelays) && (hasGroupMembers || hasOtherRelays);
+            
             console.log('[RelayMeshClient] Forwarding check:');
             console.log('[RelayMeshClient]   - Total peers:', totalPeers);
             console.log('[RelayMeshClient]   - Connected peers:', connectedPeers.length);
             console.log('[RelayMeshClient]   - Group members:', myGroup?.regularNodeIds.length || 0);
             console.log('[RelayMeshClient]   - Other relays:', this.currentTopology.relayNodes.length - 1);
+            console.log('[RelayMeshClient]   - Has other relays:', hasOtherRelays);
+            console.log('[RelayMeshClient]   - Should forward:', shouldForward);
             
             // Only recreate connections if we have multiple peers to forward to
-            // In 2-person conference (1 relay + 1 regular): totalPeers = 1, no forwarding needed
-            // In 3+ person conference: totalPeers >= 2, forwarding needed
-            if (connectedPeers.length > 0 && totalPeers > 1 && (hasGroupMembers || hasOtherRelays)) {
+            // Examples:
+            // - 2-person (1 relay + 1 regular): totalPeers = 1, hasOtherRelays = false, shouldForward = false
+            // - 3-person (2 relays, one with 1 member, one with 0): hasOtherRelays = true, shouldForward = true
+            // - 3-person (1 relay + 2 regulars): totalPeers = 2, shouldForward = true
+            if (connectedPeers.length > 0 && shouldForward && !this.isRecreatingConnections) {
               console.log('[RelayMeshClient] ✓ Relay will recreate connections to forward stream');
               // Trigger connection update which will recreate connections with all streams
               setTimeout(() => {
-                if (this.currentRole === 'relay') {
+                if (this.currentRole === 'relay' && !this.isRecreatingConnections) {
                   this.updateConnections();
                 }
               }, 500); // Small delay to ensure stream is fully received
             } else {
-              console.log('[RelayMeshClient] ✗ Relay will NOT recreate connections - no forwarding needed (2-person conference)');
+              if (this.isRecreatingConnections) {
+                console.log('[RelayMeshClient] ✗ Already recreating connections, skipping');
+              } else {
+                console.log('[RelayMeshClient] ✗ Relay will NOT recreate connections - no forwarding needed (2-person conference)');
+              }
             }
           } else {
             console.log('[RelayMeshClient] Stream already seen, skipping forwarding check');
@@ -604,6 +618,7 @@ export class RelayMeshClient extends EventEmitter {
 
       // Evaluate topology - this will update relay selection data and trigger
       // topology changes only if needed (e.g., when relay nodes change)
+      // Note: evaluateTopology will skip if connections are being recreated
       this.evaluateTopology();
     }
 
@@ -689,6 +704,14 @@ export class RelayMeshClient extends EventEmitter {
 
   private async evaluateTopologyInternal(): Promise<void> {
     if (this.stateMachine.getCurrentState() !== ConferenceState.CONNECTED) {
+      return;
+    }
+
+    // Prevent topology evaluation while connections are being recreated
+    // This avoids infinite loops where metrics broadcasts during recreation
+    // trigger new topology updates and more recreations
+    if (this.isRecreatingConnections) {
+      console.log('[RelayMeshClient] Skipping topology evaluation - connections are being recreated');
       return;
     }
 
@@ -1090,14 +1113,27 @@ export class RelayMeshClient extends EventEmitter {
       if (shouldForward) {
         console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams and peers to forward to, recreating all connections`);
         
+        // Set flag to prevent infinite loop
+        this.isRecreatingConnections = true;
+        
         // Emit event to notify UI to clear stream cache
         this.emit('connectionsRecreating');
+        
+        // Clear forwarded streams tracking for streams we're about to recreate
+        // This allows them to be re-tracked with new stream IDs after recreation
+        for (const [sourceParticipantId, _] of remoteStreams.entries()) {
+          // Remove all stream IDs from this participant
+          const keysToDelete = Array.from(this.forwardedStreamIds).filter(key => key.startsWith(`${sourceParticipantId}-`));
+          keysToDelete.forEach(key => this.forwardedStreamIds.delete(key));
+        }
         
         for (const remoteId of currentConnections) {
           if (targetConnections.includes(remoteId)) {
             console.log('[RelayMeshClient] Closing connection to recreate with forwarded streams:', remoteId);
-            this.mediaHandler.closePeerConnection(remoteId);
+          } else {
+            console.log('[RelayMeshClient] Closing stale connection no longer in target list:', remoteId);
           }
+          this.mediaHandler.closePeerConnection(remoteId);
         }
         // Clear current connections list since we're recreating all
         currentConnections.length = 0;
@@ -1173,6 +1209,14 @@ export class RelayMeshClient extends EventEmitter {
         );
       }
     }
+    
+    // Clear the recreating flag after a delay to allow streams to be received
+    // This prevents the onRemoteStream handler from triggering another recreation
+    // while we're still processing the current one
+    setTimeout(() => {
+      this.isRecreatingConnections = false;
+      console.log('[RelayMeshClient] Connection recreation complete, ready for new streams');
+    }, 2000); // 2 second delay to ensure all streams are received
   }
 
   private getTargetConnections(participantId: string): string[] {
@@ -1339,6 +1383,20 @@ export class RelayMeshClient extends EventEmitter {
       // Set remote description (the offer)
       await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
 
+      // Process any queued ICE candidates now that remote description is set
+      const queuedCandidates = this.pendingIceCandidates.get(message.from);
+      if (queuedCandidates && queuedCandidates.length > 0) {
+        console.log(`[RelayMeshClient] Processing ${queuedCandidates.length} queued ICE candidates for:`, message.from);
+        for (const candidate of queuedCandidates) {
+          try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (error) {
+            console.error('[RelayMeshClient] Error adding queued ICE candidate:', error);
+          }
+        }
+        this.pendingIceCandidates.delete(message.from);
+      }
+
       // Create and send answer
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
@@ -1380,6 +1438,20 @@ export class RelayMeshClient extends EventEmitter {
       // Set remote description (the answer)
       await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
 
+      // Process any queued ICE candidates now that remote description is set
+      const queuedCandidates = this.pendingIceCandidates.get(message.from);
+      if (queuedCandidates && queuedCandidates.length > 0) {
+        console.log(`[RelayMeshClient] Processing ${queuedCandidates.length} queued ICE candidates for:`, message.from);
+        for (const candidate of queuedCandidates) {
+          try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (error) {
+            console.error('[RelayMeshClient] Error adding queued ICE candidate:', error);
+          }
+        }
+        this.pendingIceCandidates.delete(message.from);
+      }
+
       console.log('[RelayMeshClient] Set remote description from answer:', message.from);
       
       // Clear the makingOffer flag now that negotiation is complete
@@ -1406,6 +1478,16 @@ export class RelayMeshClient extends EventEmitter {
 
       if (!peerConnection) {
         console.error('[RelayMeshClient] No peer connection found for:', message.from);
+        return;
+      }
+
+      // Queue ICE candidates if remote description is not set yet
+      if (!peerConnection.remoteDescription) {
+        console.log('[RelayMeshClient] Queueing ICE candidate - remote description not set yet');
+        if (!this.pendingIceCandidates.has(message.from)) {
+          this.pendingIceCandidates.set(message.from, []);
+        }
+        this.pendingIceCandidates.get(message.from)!.push(message.candidate);
         return;
       }
 

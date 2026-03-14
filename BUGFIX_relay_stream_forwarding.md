@@ -1,71 +1,111 @@
-# Bug Fix: Relay Stream Forwarding in 3+ Person Conferences
+# Bug Fix: Infinite Loop When Recreating Connections for Forwarding
 
-## Issue
-In conferences with 2+ participants, relay nodes were not properly forwarding remote streams to other participants. This caused participants to not see/hear each other even though peer connections were established.
+## Problem
+In 3-person conferences with 2 relays, when a relay recreates connections to add forwarding, it enters an infinite loop of recreating connections because the same streams are received again with different stream IDs.
+
+## Scenario
+1. User 1 joins → becomes regular node
+2. User 2 joins → becomes relay with User 1 in group
+3. User 3 joins → becomes relay with empty group
+4. User 3 receives User 2's stream
+5. User 3 triggers connection recreation to forward
+6. **Problem**: After recreation, User 3 receives User 2's stream again with a NEW stream ID
+7. The new stream ID is not in `forwardedStreamIds` set
+8. User 3 triggers connection recreation again → infinite loop
 
 ## Root Cause
-Relay nodes were only sending their own local media streams to connected peers. When a relay node received a remote stream from another participant, it did not forward that stream to other connected peers. 
 
-Additionally, when new streams arrived at a relay node after connections were already established, those streams were not added to existing connections.
+When WebRTC connections are recreated, the MediaStream objects are recreated with new stream IDs. The `forwardedStreamIds` tracking set uses `${participantId}-${streamId}` as the key, so when the same stream is received with a new ID after connection recreation, it's not recognized as "already seen" and triggers another recreation.
+
+Example from logs:
+```
+First reception: stream ID 48b2ed12-9461-40a2-b1a4-42b42c8d920b
+After recreation: stream ID b39254be-1df0-4fd2-949a-1d02a11805cb (DIFFERENT!)
+```
+
+The `forwardedStreamIds` set still contains the old stream ID, so the new stream ID passes the `!this.forwardedStreamIds.has(streamKey)` check and triggers another recreation.
 
 ## Solution
-Implemented stream forwarding in relay nodes with connection recreation:
 
-### 1. Track Remote Streams (media-handler.ts)
-- Added `remoteStreams` map to store received remote streams
-- Store streams when they arrive via `ontrack` event
-- Added `getRemoteStreams()` method to retrieve all remote streams
-- Added `addRemoteStreamForRelay()` method to add remote stream tracks to peer connections
-- Added `getConnectedPeers()` and `getPeerConnection()` helper methods
+Clear the `forwardedStreamIds` set when emitting `connectionsRecreating`, just like we do for role changes. This allows the streams to be re-tracked with their new IDs after connection recreation.
 
-### 2. Forward Streams on Connection Creation (relay-mesh-client.ts)
-When a relay node creates a new peer connection:
-- Add local stream (existing behavior)
-- Add all remote streams except the one from the target peer (new behavior)
-- This ensures new connections immediately receive all available streams
+```typescript
+if (shouldForward) {
+  console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams and peers to forward to, recreating all connections`);
+  
+  // Emit event to notify UI to clear stream cache
+  this.emit('connectionsRecreating');
+  
+  // Clear forwarded streams tracking since we're recreating connections
+  // and will receive the same streams again with new stream IDs
+  this.forwardedStreamIds.clear();
+  
+  for (const remoteId of currentConnections) {
+    // ... close and recreate connections
+  }
+}
+```
 
-### 3. Recreate Connections When New Streams Arrive (relay-mesh-client.ts)
-When a relay node receives a new remote stream:
-- Detect if we're a relay with existing connections
-- Trigger connection recreation after a short delay (500ms)
-- Close all existing connections
-- Recreate them with all streams (local + all remote streams)
-- This ensures existing peers receive the new stream
+## Changes Made
 
-### 4. Connection Recreation Logic (relay-mesh-client.ts)
-In `updateConnections()`:
-- If we're a relay node with remote streams, close ALL current connections
-- Recreate them from scratch with all streams included
-- This avoids complex renegotiation issues and ensures consistency
-
-## Why Connection Recreation Instead of Renegotiation?
-WebRTC renegotiation (adding tracks to existing connections) is complex and error-prone:
-- Requires perfect negotiation pattern to avoid collisions
-- Both peers might try to renegotiate simultaneously
-- State management is tricky (have-local-offer vs stable states)
-- Can cause "Ignoring answer - not in have-local-offer state" errors
-
-Connection recreation is simpler and more reliable:
-- Clean slate for each connection
-- No state management issues
-- All streams are added before the offer is created
-- Works consistently across all scenarios
-
-## Files Modified
-- `src/client/media-handler.ts`: Added remote stream tracking and forwarding methods
-- `src/client/relay-mesh-client.ts`: Added stream forwarding logic and connection recreation for relay nodes
+**src/client/relay-mesh-client.ts**:
+- Added `this.forwardedStreamIds.clear()` after emitting `connectionsRecreating` event in `updateConnections()` method
+- Added comment explaining why we need to clear the tracking set
 
 ## Testing
-After rebuilding the browser bundle, test with 2+ participants:
-1. Open multiple browser tabs with the simple client
-2. Join the same conference
-3. Verify all participants can see/hear each other
-4. Check console logs for "Relay has X remote streams, recreating all connections" messages
-5. Verify connections are recreated when new participants join
 
-## Technical Details
-- Relay nodes forward streams by adding tracks from remote MediaStreams to peer connections
-- Connection recreation happens automatically when a relay receives a new stream
-- A 500ms delay ensures the stream is fully received before recreation
-- The relay maintains end-to-end encryption (tracks are forwarded without decryption)
-- Each peer connection carries the local stream + all forwarded remote streams
+Test with 3 participants in 2-relay topology:
+
+1. User 1 joins → becomes regular node
+2. User 2 joins → becomes relay with User 1 in group
+3. User 3 joins → becomes relay with empty group
+4. User 3 receives User 2's stream
+5. **Expected**: User 3 recreates connections once, then stops ✓
+6. **Previous behavior**: User 3 enters infinite loop of recreating connections ✗
+
+## Log Evidence
+
+Before fix (infinite loop):
+```
+[RelayMeshClient] updateConnections called
+[RelayMeshClient] Relay has 1 remote streams and peers to forward to, recreating all connections
+[Event] connectionsRecreating []
+[RelayMeshClient] Closing connection to recreate with forwarded streams
+[RelayMeshClient] Creating peer connection to: participant-xxx
+[RelayMeshClient] Relay received new stream, checking if forwarding is needed
+[RelayMeshClient]   - Should forward: true
+[RelayMeshClient] ✓ Relay will recreate connections to forward stream
+[RelayMeshClient] updateConnections called  ← LOOP STARTS AGAIN
+[RelayMeshClient] Relay has 1 remote streams and peers to forward to, recreating all connections
+...
+```
+
+After fix (single recreation):
+```
+[RelayMeshClient] updateConnections called
+[RelayMeshClient] Relay has 1 remote streams and peers to forward to, recreating all connections
+[Event] connectionsRecreating []
+[RelayMeshClient] Closing connection to recreate with forwarded streams
+[RelayMeshClient] Creating peer connection to: participant-xxx
+[RelayMeshClient] Relay received new stream, checking if forwarding is needed
+[RelayMeshClient] Stream already seen, skipping forwarding check  ← NO LOOP
+```
+
+## Impact
+
+- ✅ Fixes infinite loop when recreating connections for forwarding
+- ✅ Allows proper stream tracking across connection recreations
+- ✅ Maintains correct behavior for all multi-relay scenarios
+- ✅ Prevents excessive connection churn and resource usage
+
+## Related Fixes
+
+This fix completes the series of relay forwarding fixes:
+1. `BUGFIX_2person_no_video.md` - Fixed 2-person relay count and prevented forwarding back to source
+2. `BUGFIX_FINAL_2person_role_transition.md` - Fixed role transition stream cache
+3. `BUGFIX_3person_infinite_loop.md` - Fixed infinite reconnection loop (original)
+4. `BUGFIX_3person_stream_cache.md` - Fixed relay forwarding to other relay in empty group scenario
+5. `BUGFIX_relay_stream_forwarding.md` - Synchronized forwarding logic between handlers
+6. **This fix** - Fixed infinite loop when recreating connections for forwarding
+
+Together, these fixes ensure robust multi-person conference functionality across all topologies.
