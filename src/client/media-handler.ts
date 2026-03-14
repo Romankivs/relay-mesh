@@ -48,6 +48,8 @@ export class MediaHandler {
   private streamIdToParticipantId: Map<string, string> = new Map();
   // Pending streams received before their relay stream map arrived
   private pendingRelayStreams: Map<string, { stream: globalThis.MediaStream; connectionId: string }> = new Map();
+  // Reusable relay stream map data channels, keyed by remote participant ID
+  private relayStreamMapChannels: Map<string, RTCDataChannel> = new Map();
 
   constructor(localParticipantId: string) {
     this.localParticipantId = localParticipantId;
@@ -271,6 +273,31 @@ export class MediaHandler {
         peerConnection.addTrack(track, remoteStream);
       }
     });
+  }
+
+  /**
+   * Send (or update) the relay stream map to a remote peer via a data channel.
+   * Creates the channel on first call; reuses it on subsequent calls.
+   * streamMap: { [nativeStreamId]: originalParticipantId }
+   */
+  sendRelayStreamMap(remoteParticipantId: string, peerConnection: RTCPeerConnection, streamMap: Record<string, string>): void {
+    if (Object.keys(streamMap).length === 0) return;
+
+    const existing = this.relayStreamMapChannels.get(remoteParticipantId);
+    if (existing && existing.readyState === 'open') {
+      existing.send(JSON.stringify(streamMap));
+      console.log(`[MediaHandler] Updated relay stream map to ${remoteParticipantId}:`, streamMap);
+    } else {
+      // Create a new channel (use a unique label so it doesn't conflict with a closed one)
+      const label = `relay-stream-map-${Date.now()}`;
+      const dc = peerConnection.createDataChannel(label);
+      // Store under the generic label pattern so ondatachannel can match it
+      dc.onopen = () => {
+        dc.send(JSON.stringify(streamMap));
+        console.log(`[MediaHandler] Sent relay stream map to ${remoteParticipantId}:`, streamMap);
+        this.relayStreamMapChannels.set(remoteParticipantId, dc);
+      };
+    }
   }
   /**
    * Get all remote streams (for relay forwarding)
@@ -573,7 +600,7 @@ export class MediaHandler {
   ): void {
     // Listen for relay stream-map data channel from the remote peer (relay node)
     peerConnection.ondatachannel = (event) => {
-      if (event.channel.label === 'relay-stream-map') {
+      if (event.channel.label.startsWith('relay-stream-map')) {
         event.channel.onmessage = (msg) => {
           try {
             const map: Record<string, string> = JSON.parse(msg.data);

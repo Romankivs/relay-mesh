@@ -190,18 +190,15 @@ export class RelayMeshClient extends EventEmitter {
             // - 3-person (2 relays, one with 1 member, one with 0): hasOtherRelays = true, shouldForward = true
             // - 3-person (1 relay + 2 regulars): totalPeers = 2, shouldForward = true
             if (connectedPeers.length > 0 && shouldForward && !this.isRecreatingConnections) {
-              console.log('[RelayMeshClient] ✓ Relay will recreate connections to forward stream');
-              // Trigger connection update which will recreate connections with all streams
-              setTimeout(() => {
-                if (this.currentRole === 'relay' && !this.isRecreatingConnections) {
-                  this.updateConnections();
-                }
-              }, 500); // Small delay to ensure stream is fully received
+              console.log('[RelayMeshClient] ✓ Relay forwarding new stream to connected peers');
+              // Forward the new stream directly to all connected peers via renegotiation.
+              // This avoids tearing down and rebuilding connections unnecessarily.
+              this.forwardNewStreamToConnectedPeers(stream);
             } else {
               if (this.isRecreatingConnections) {
                 console.log('[RelayMeshClient] ✗ Already recreating connections, skipping');
               } else {
-                console.log('[RelayMeshClient] ✗ Relay will NOT recreate connections - no forwarding needed (2-person conference)');
+                console.log('[RelayMeshClient] ✗ Relay will NOT forward stream - no forwarding needed (2-person conference)');
               }
             }
           } else {
@@ -565,6 +562,27 @@ export class RelayMeshClient extends EventEmitter {
       
       this.emit('roleChange', newRole);
       
+      // Re-emit all currently known remote streams so the UI can rebuild its video elements.
+      // The UI clears its stream cache on roleChange, so we need to re-deliver streams
+      // that were already received on the old connection.
+      // Use setTimeout to ensure the UI's roleChange handler runs first (clears its cache).
+      if (this.mediaHandler) {
+        const remoteStreams = this.mediaHandler.getRemoteStreams();
+        console.log(`[RelayMeshClient] Re-emitting ${remoteStreams.size} remote streams after role change`);
+        const streamsToReemit = Array.from(remoteStreams.entries());
+        setTimeout(() => {
+          for (const [sourceParticipantId, remoteStream] of streamsToReemit) {
+            const mediaStream: import('./media-handler').MediaStream = {
+              streamId: remoteStream.id,
+              participantId: sourceParticipantId,
+              tracks: remoteStream.getTracks(),
+              isLocal: false,
+            };
+            this.emit('remoteStream', mediaStream);
+          }
+        }, 0);
+      }
+      
       // Handle relay engine
       if (newRole === 'relay' && !this.relayEngine) {
         this.relayEngine = new RelayEngine();
@@ -574,17 +592,8 @@ export class RelayMeshClient extends EventEmitter {
         this.relayEngine = null;
       }
       
-      // CRITICAL: When role changes, close ALL existing connections
-      // This ensures connections are recreated with the correct topology
-      // For example, when transitioning from relay to regular, we need to
-      // disconnect from other relays and connect only to our assigned relay
-      if (this.mediaHandler) {
-        console.log('[RelayMeshClient] Role changed - closing all connections to recreate with new topology');
-        const currentConnections = this.mediaHandler.getActiveConnections();
-        for (const remoteId of currentConnections) {
-          this.mediaHandler.closePeerConnection(remoteId);
-        }
-      }
+      // updateConnections() below will diff current vs target connections and
+      // close/open only what's needed — no need to nuke everything here.
     }
 
     // If we were joining, complete the join
@@ -715,9 +724,10 @@ export class RelayMeshClient extends EventEmitter {
       return;
     }
 
-    // Run selection algorithm
+    // Run selection algorithm, passing current relays for hysteresis
     const config = this.buildSelectionConfig();
-    const result = this.selectionAlgorithm.selectRelayNodes(this.allMetrics, config);
+    const currentRelayIds = this.currentTopology?.relayNodes || [];
+    const result = this.selectionAlgorithm.selectRelayNodes(this.allMetrics, config, currentRelayIds);
     const relayNodeIds = result.selectedIds;
 
     // Send relay selection data to server for monitoring
@@ -727,12 +737,12 @@ export class RelayMeshClient extends EventEmitter {
     }
 
     // Check if topology needs update
-    const currentRelayIds = this.currentTopology?.relayNodes || [];
-    // Sort both arrays before comparison to avoid false positives from different ordering
-    const relayNodesChanged = !this.arraysEqual(relayNodeIds, currentRelayIds);
+    // Compare against lastTopologyRelayIds (what we last broadcast) rather than
+    // currentRelayIds (which can change as we receive topology updates from others),
+    // to prevent oscillation feedback loops.
+    const relayNodesChanged = !this.arraysEqual(relayNodeIds, this.lastTopologyRelayIds);
     
-    console.log('[RelayMeshClient] Relay comparison - new:', [...relayNodeIds].sort(), 'current:', [...currentRelayIds].sort(), 'changed:', relayNodesChanged);
-    
+    console.log('[RelayMeshClient] Relay comparison - new:', [...relayNodeIds].sort(), 'last broadcast:', [...this.lastTopologyRelayIds].sort(), 'current topology:', [...currentRelayIds].sort(), 'changed:', relayNodesChanged);    
     // Check for participant count changes (new/deleted users)
     const participantCountChanged = this.allMetrics.size !== this.lastTopologyMetricsSnapshot.size;
     
@@ -784,6 +794,8 @@ export class RelayMeshClient extends EventEmitter {
         // Update snapshot to prevent repeated checks
         this.lastTopologyRelayIds = [...relayNodeIds].sort();
         this.snapshotMetrics();
+        // Still ensure connections are up-to-date (e.g. after a role change closed them)
+        await this.updateConnections();
         return;
       }
 
@@ -813,17 +825,8 @@ export class RelayMeshClient extends EventEmitter {
           this.relayEngine = null;
         }
         
-        // CRITICAL: When role changes, close ALL existing connections
-        // This ensures connections are recreated with the correct topology
-        // For example, when transitioning from relay to regular, we need to
-        // disconnect from other relays and connect only to our assigned relay
-        if (this.mediaHandler) {
-          console.log('[RelayMeshClient] Role changed - closing all connections to recreate with new topology');
-          const currentConnections = this.mediaHandler.getActiveConnections();
-          for (const remoteId of currentConnections) {
-            this.mediaHandler.closePeerConnection(remoteId);
-          }
-        }
+        // updateConnections() below will diff current vs target connections and
+        // close/open only what's needed — no need to nuke everything here.
       }
       
       // Update connections based on new topology
@@ -834,6 +837,8 @@ export class RelayMeshClient extends EventEmitter {
       this.snapshotMetrics();
     } else {
       console.log('[RelayMeshClient] Topology unchanged - no significant changes detected');
+      // Still ensure connections match the current topology (may have been disrupted)
+      await this.updateConnections();
     }
   }
 
@@ -1014,7 +1019,19 @@ export class RelayMeshClient extends EventEmitter {
             const peerConnection = this.mediaHandler.getPeerConnection(peerId);
             if (peerConnection) {
               console.log(`[RelayMeshClient] Adding tracks from ${stream.participantId} to connection with ${peerId}`);
-              this.mediaHandler.addRemoteStreamForRelay(peerConnection, sourceStream);
+              // Pass originalParticipantId so the receiver can attribute the stream correctly
+              this.mediaHandler.addRemoteStreamForRelay(peerConnection, sourceStream, stream.participantId);
+
+              // Build the full stream map for this peer (all forwarded streams, not just the new one)
+              const streamMap: Record<string, string> = {};
+              for (const [sourceId, remoteStream] of remoteStreams.entries()) {
+                if (sourceId !== peerId) {
+                  streamMap[remoteStream.id] = sourceId;
+                }
+              }
+
+              // Send updated stream map so the receiver knows all stream→participant mappings
+              this.mediaHandler.sendRelayStreamMap(peerId, peerConnection, streamMap);
 
               // Renegotiate the connection to add the new tracks
               this.renegotiateConnection(peerId, peerConnection);
@@ -1042,6 +1059,10 @@ export class RelayMeshClient extends EventEmitter {
 
       try {
         console.log(`[RelayMeshClient] Renegotiating connection with ${peerId}`);
+        if (peerConnection.signalingState !== 'stable') {
+          console.log(`[RelayMeshClient] Skipping renegotiation with ${peerId} - signaling state: ${peerConnection.signalingState}`);
+          return;
+        }
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
         this.signalingClient.sendWebRTCOffer(peerId, offer);
@@ -1203,25 +1224,27 @@ export class RelayMeshClient extends EventEmitter {
 
           // Send the stream map over a data channel so the receiver can attribute streams correctly
           if (Object.keys(streamMap).length > 0) {
-            const dc = peerConnection.createDataChannel('relay-stream-map');
-            dc.onopen = () => {
-              dc.send(JSON.stringify(streamMap));
-              console.log(`[RelayMeshClient] Sent relay stream map to ${remoteId}:`, streamMap);
-            };
+            this.mediaHandler.sendRelayStreamMap(remoteId, peerConnection, streamMap);
           }
         }
 
-        // Initiate WebRTC offer
-        console.log('[RelayMeshClient] Creating WebRTC offer for:', remoteId);
-        this.makingOffer.set(remoteId, true);
-        try {
-          const offer = await peerConnection.createOffer();
-          await peerConnection.setLocalDescription(offer);
-          this.signalingClient.sendWebRTCOffer(remoteId, offer);
-          console.log('[RelayMeshClient] Sent WebRTC offer to:', remoteId);
-        } catch (error) {
-          console.error('[RelayMeshClient] Error creating offer for:', remoteId, error);
-          this.makingOffer.set(remoteId, false);
+        // Initiate WebRTC offer — only if we're in a state where we can create one.
+        // If the peer already sent us an offer (have-remote-offer), skip: the
+        // handleWebRTCOffer path will create the answer and complete negotiation.
+        if (peerConnection.signalingState !== 'stable') {
+          console.log('[RelayMeshClient] Skipping offer for:', remoteId, '- signaling state:', peerConnection.signalingState);
+        } else {
+          console.log('[RelayMeshClient] Creating WebRTC offer for:', remoteId);
+          this.makingOffer.set(remoteId, true);
+          try {
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            this.signalingClient.sendWebRTCOffer(remoteId, offer);
+            console.log('[RelayMeshClient] Sent WebRTC offer to:', remoteId);
+          } catch (error) {
+            console.error('[RelayMeshClient] Error creating offer for:', remoteId, error);
+            this.makingOffer.set(remoteId, false);
+          }
         }
         // Note: makingOffer flag is cleared when we receive an answer or handle a collision
       }

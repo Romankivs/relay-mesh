@@ -139,7 +139,8 @@ export class SelectionAlgorithm {
    */
   selectRelayNodes(
     allMetrics: Map<string, ParticipantMetrics>,
-    config: SelectionConfig
+    config: SelectionConfig,
+    currentRelayIds: string[] = []
   ): {
     selectedIds: string[];
     selectionData: {
@@ -192,9 +193,48 @@ export class SelectionAlgorithm {
       return a.participantId.localeCompare(b.participantId);
     });
 
-    // Return top N participant IDs
+    // Apply hysteresis: prefer keeping current relays to avoid churn.
+    // A current relay is only displaced if a challenger scores more than 15% better.
     const selectedCount = Math.min(optimalRelayCount, eligibleScores.length);
-    const selectedIds = eligibleScores.slice(0, selectedCount).map((score) => score.participantId);
+    const currentRelaySet = new Set(currentRelayIds);
+    const HYSTERESIS_THRESHOLD = 0.15; // challenger must beat incumbent by >15% to displace it
+
+    const selected: RelayScore[] = [];
+    const remaining: RelayScore[] = [];
+
+    // First pass: keep current relays that are still eligible and not severely degraded
+    for (const score of eligibleScores) {
+      if (currentRelaySet.has(score.participantId) && selected.length < selectedCount) {
+        selected.push(score);
+      } else {
+        remaining.push(score);
+      }
+    }
+
+    // Second pass: fill remaining slots with best challengers, but only if they
+    // beat the weakest incumbent by more than the hysteresis threshold
+    for (const challenger of remaining) {
+      if (selected.length >= selectedCount) break;
+
+      if (selected.length === 0) {
+        // No incumbents at all — just pick the best
+        selected.push(challenger);
+      } else {
+        // Find the weakest incumbent
+        const weakest = selected.reduce((min, s) => s.totalScore < min.totalScore ? s : min, selected[0]);
+        if (challenger.totalScore > weakest.totalScore * (1 + HYSTERESIS_THRESHOLD)) {
+          // Challenger is significantly better — displace the weakest incumbent
+          selected.splice(selected.indexOf(weakest), 1, challenger);
+        } else {
+          // Not better enough — keep the incumbent, add challenger to fill empty slot
+          selected.push(challenger);
+        }
+      }
+    }
+
+    // Sort final selection for deterministic output
+    selected.sort((a, b) => a.participantId.localeCompare(b.participantId));
+    const selectedIds = selected.map((score) => score.participantId);
 
     // Build selection data for monitoring
     const selectionData = {
@@ -204,7 +244,7 @@ export class SelectionAlgorithm {
       eligibleCount: eligibleScores.length,
       selectedCount,
       selectedIds,
-      scores: eligibleScores.slice(0, selectedCount).map(s => ({
+      scores: selected.map(s => ({
         id: s.participantId,
         total: s.totalScore.toFixed(3),
         bandwidth: s.bandwidthScore.toFixed(3),
