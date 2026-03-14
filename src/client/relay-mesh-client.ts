@@ -759,7 +759,8 @@ export class RelayMeshClient extends EventEmitter {
       
       if (participantId !== leaderId) {
         console.log('[RelayMeshClient] Not the leader (leader is', leaderId, '), skipping topology broadcast');
-        // Non-leaders still evaluate topology for monitoring, but don't broadcast
+        // Non-leaders still snapshot metrics so participantCountChanged doesn't stay perpetually true
+        this.snapshotMetrics();
         return;
       }
       
@@ -1109,8 +1110,16 @@ export class RelayMeshClient extends EventEmitter {
       // - 3-person (2 relays, one with 1 member, one with 0): totalPeers = 1 BUT hasOtherRelays = true, so forward
       // - 3-person (1 relay + 2 regulars): totalPeers = 2, forward
       const shouldForward = (totalPeers > 1 || hasOtherRelays) && (hasGroupMembers || hasOtherRelays);
+
+      // Only recreate connections if the target set actually changed.
+      // If we already have exactly the right connections, tearing them down just
+      // to rebuild them causes unnecessary churn and stream interruptions.
+      const targetSet = new Set(targetConnections);
+      const currentSet = new Set(currentConnections);
+      const connectionsChanged = targetConnections.some(id => !currentSet.has(id)) ||
+                                 currentConnections.some(id => !targetSet.has(id));
       
-      if (shouldForward) {
+      if (shouldForward && connectionsChanged) {
         console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams and peers to forward to, recreating all connections`);
         
         // Set flag to prevent infinite loop
@@ -1137,6 +1146,15 @@ export class RelayMeshClient extends EventEmitter {
         }
         // Clear current connections list since we're recreating all
         currentConnections.length = 0;
+      } else if (shouldForward && !connectionsChanged) {
+        console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams but connections unchanged, skipping recreation`);
+        // Still close any stale connections not in target
+        for (const remoteId of currentConnections) {
+          if (!targetConnections.includes(remoteId)) {
+            console.log('[RelayMeshClient] Closing stale connection no longer in target list:', remoteId);
+            this.mediaHandler.closePeerConnection(remoteId);
+          }
+        }
       } else {
         console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams but no peers to forward to, keeping connections`);
       }
@@ -1171,12 +1189,25 @@ export class RelayMeshClient extends EventEmitter {
           const remoteStreams = this.mediaHandler.getRemoteStreams();
           console.log(`[RelayMeshClient] Relay mode: forwarding ${remoteStreams.size} remote streams to ${remoteId}`);
           
+          // Build stream-ID → original-participant-ID map to send over data channel
+          const streamMap: Record<string, string> = {};
+
           for (const [sourceParticipantId, remoteStream] of remoteStreams.entries()) {
             // Don't forward a stream back to its source
             if (sourceParticipantId !== remoteId) {
               console.log(`[RelayMeshClient] Forwarding stream from ${sourceParticipantId} to ${remoteId}`);
-              this.mediaHandler.addRemoteStreamForRelay(peerConnection, remoteStream);
+              this.mediaHandler.addRemoteStreamForRelay(peerConnection, remoteStream, sourceParticipantId);
+              streamMap[remoteStream.id] = sourceParticipantId;
             }
+          }
+
+          // Send the stream map over a data channel so the receiver can attribute streams correctly
+          if (Object.keys(streamMap).length > 0) {
+            const dc = peerConnection.createDataChannel('relay-stream-map');
+            dc.onopen = () => {
+              dc.send(JSON.stringify(streamMap));
+              console.log(`[RelayMeshClient] Sent relay stream map to ${remoteId}:`, streamMap);
+            };
           }
         }
 
@@ -1262,8 +1293,21 @@ export class RelayMeshClient extends EventEmitter {
       );
       
       console.log('[RelayMeshClient] Regular node - assigned group:', group);
-      
-      return group ? [group.relayNodeId] : [];
+
+      if (group) {
+        return [group.relayNodeId];
+      }
+
+      // Fallback: not yet assigned to a group (topology race on join).
+      // Connect to the first relay so we're not isolated while waiting for
+      // the leader to broadcast an updated topology that includes us.
+      if (this.currentTopology.relayNodes.length > 0) {
+        const fallbackRelay = this.currentTopology.relayNodes[0];
+        console.log('[RelayMeshClient] Regular node not yet in any group, using fallback relay:', fallbackRelay);
+        return [fallbackRelay];
+      }
+
+      return [];
     }
   }
 

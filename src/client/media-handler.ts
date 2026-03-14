@@ -44,6 +44,10 @@ export class MediaHandler {
   private retryTimeouts: Map<string, NodeJS.Timeout> = new Map(); // Track retry timers
   private emittedStreams: Set<string> = new Set(); // Track which streams we've already emitted
   private remoteStreams: Map<string, globalThis.MediaStream> = new Map(); // Track remote streams for relay forwarding
+  // Maps native stream ID → original participant ID for relay-forwarded streams
+  private streamIdToParticipantId: Map<string, string> = new Map();
+  // Pending streams received before their relay stream map arrived
+  private pendingRelayStreams: Map<string, { stream: globalThis.MediaStream; connectionId: string }> = new Map();
 
   constructor(localParticipantId: string) {
     this.localParticipantId = localParticipantId;
@@ -246,7 +250,16 @@ export class MediaHandler {
    * @param peerConnection - The peer connection to add tracks to
    * @param remoteStream - The remote MediaStream to forward
    */
-  addRemoteStreamForRelay(peerConnection: RTCPeerConnection, remoteStream: globalThis.MediaStream): void {
+  addRemoteStreamForRelay(
+    peerConnection: RTCPeerConnection,
+    remoteStream: globalThis.MediaStream,
+    originalParticipantId?: string
+  ): void {
+    // Register the stream→participant mapping so the receiver can attribute it correctly
+    if (originalParticipantId) {
+      this.streamIdToParticipantId.set(remoteStream.id, originalParticipantId);
+    }
+
     // Add each track from the remote stream to the peer connection
     // Check if track is already added to avoid "sender already exists" error
     remoteStream.getTracks().forEach((track) => {
@@ -524,6 +537,29 @@ export class MediaHandler {
   }
 
   /**
+   * Emit a resolved remote stream event with the correct participant ID.
+   * Deduplicates by stream key to avoid firing multiple times per stream.
+   */
+  private emitResolvedStream(remoteStream: globalThis.MediaStream, participantId: string): void {
+    const streamKey = `${participantId}-${remoteStream.id}`;
+    if (this.emittedStreams.has(streamKey)) {
+      console.log(`[MediaHandler] Stream ${streamKey} already emitted, skipping duplicate`);
+      return;
+    }
+    this.emittedStreams.add(streamKey);
+
+    const mediaStream: MediaStream = {
+      streamId: remoteStream.id,
+      participantId,
+      tracks: remoteStream.getTracks(),
+      isLocal: false,
+    };
+
+    console.log(`[MediaHandler] Emitting remoteStream event for ${participantId}, stream: ${remoteStream.id}`);
+    this.remoteStreamCallbacks.forEach((callback) => callback(mediaStream));
+  }
+
+  /**
    * Set up event handlers for peer connection (Task 8.5, 18.1)
    * Handles remote streams and connection state changes
    * Implements connection failure detection and retry logic
@@ -535,36 +571,63 @@ export class MediaHandler {
     peerConnection: RTCPeerConnection,
     remoteParticipantId: string
   ): void {
+    // Listen for relay stream-map data channel from the remote peer (relay node)
+    peerConnection.ondatachannel = (event) => {
+      if (event.channel.label === 'relay-stream-map') {
+        event.channel.onmessage = (msg) => {
+          try {
+            const map: Record<string, string> = JSON.parse(msg.data);
+            for (const [streamId, originalParticipantId] of Object.entries(map)) {
+              console.log(`[MediaHandler] Relay stream map: stream ${streamId} → participant ${originalParticipantId}`);
+              this.streamIdToParticipantId.set(streamId, originalParticipantId);
+
+              // Flush any pending stream that was waiting for this mapping
+              const pending = this.pendingRelayStreams.get(streamId);
+              if (pending) {
+                this.pendingRelayStreams.delete(streamId);
+
+                // Update remoteStreams map to use the correct key
+                this.remoteStreams.delete(pending.connectionId);
+                this.remoteStreams.set(originalParticipantId, pending.stream);
+
+                this.emitResolvedStream(pending.stream, originalParticipantId);
+              }
+            }
+          } catch (e) {
+            console.warn('[MediaHandler] Failed to parse relay stream map:', e);
+          }
+        };
+      }
+    };
+
     // Handle incoming tracks (remote streams)
     peerConnection.ontrack = (event) => {
       console.log(`[MediaHandler] Received track from ${remoteParticipantId}:`, event.track.kind);
       const remoteStream = event.streams[0];
 
       if (remoteStream) {
-        // Store the remote stream for relay forwarding
-        this.remoteStreams.set(remoteParticipantId, remoteStream);
-        
-        // Create a unique key for this stream
-        const streamKey = `${remoteParticipantId}-${remoteStream.id}`;
-        
-        // Only emit once per stream (ontrack fires once per track)
-        if (!this.emittedStreams.has(streamKey)) {
-          this.emittedStreams.add(streamKey);
-          
-          const mediaStream: MediaStream = {
-            streamId: remoteStream.id,
-            participantId: remoteParticipantId,
-            tracks: remoteStream.getTracks(),
-            isLocal: false,
-          };
+        // Check if we already have a mapping for this stream (relay-forwarded)
+        const knownParticipantId = this.streamIdToParticipantId.get(remoteStream.id);
 
-          console.log(`[MediaHandler] Emitting remoteStream event for ${remoteParticipantId}, stream: ${remoteStream.id}`);
-          // Notify all registered callbacks
-          this.remoteStreamCallbacks.forEach((callback) => {
-            callback(mediaStream);
-          });
+        if (knownParticipantId) {
+          // Mapping already available — emit with the correct original participant ID
+          this.remoteStreams.set(knownParticipantId, remoteStream);
+          this.emitResolvedStream(remoteStream, knownParticipantId);
         } else {
-          console.log(`[MediaHandler] Stream ${streamKey} already emitted, skipping duplicate`);
+          // No mapping yet. Park as pending — the relay stream map data channel message
+          // will arrive shortly and flush it with the correct participant ID.
+          // If no map ever arrives (direct connection), flush after a short grace period.
+          this.pendingRelayStreams.set(remoteStream.id, { stream: remoteStream, connectionId: remoteParticipantId });
+
+          setTimeout(() => {
+            const stillPending = this.pendingRelayStreams.get(remoteStream.id);
+            if (stillPending) {
+              // No relay map arrived — this is a direct stream, emit under the connection's ID
+              this.pendingRelayStreams.delete(remoteStream.id);
+              this.remoteStreams.set(remoteParticipantId, remoteStream);
+              this.emitResolvedStream(remoteStream, remoteParticipantId);
+            }
+          }, 500); // 500ms grace period for data channel to open and deliver the map
         }
       }
     };
