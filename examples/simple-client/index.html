@@ -305,7 +305,7 @@
 
     <script type="module">
         // Using the ES module browser bundle (with cache buster)
-        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=30';
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=33';
 
         console.log('[Simple Client] Version 1.2.4 - Join muted by default');
         console.log('[Simple Client] Checking for getLocalStream method...');
@@ -747,6 +747,9 @@
                 // Handle role changes - clear processed streams to allow re-processing after reconnection
                 client.on('roleChange', (role) => {
                     log(`Role changed to: ${role} - clearing stream cache`, 'info');
+                    const myInfo = client.getConferenceInfo();
+                    const myShortId = myInfo?.participantId?.slice(-8) ?? '?';
+                    console.log(`%c[MY ID: ${myShortId}] ROLE CHANGED → ${role}`, 'background:#222;color:#ff0;font-size:14px;padding:4px');
                     console.log('[roleChange] Clearing processedStreams cache to allow stream re-processing');
                     
                     // Clear processed streams so that when connections are recreated,
@@ -842,6 +845,9 @@
                 // Store our own participant name
                 participantNames.set(info.participantId, elements.userName.value);
                 
+                // Prominent log so user knows which tab is which
+                const shortId = info.participantId.slice(-8);
+                console.log(`%c[MY ID: ${shortId}] role=${info.role} name=${elements.userName.value} fullId=${info.participantId}`, 'background:#222;color:#0f0;font-size:14px;padding:4px');
                 console.log('[DEBUG] Join completed, getting local stream...');
                 
                 // Get local stream and setup audio monitoring

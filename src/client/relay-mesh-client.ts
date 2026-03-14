@@ -62,6 +62,8 @@ export class RelayMeshClient extends EventEmitter {
   private forwardedStreamIds: Set<string> = new Set(); // Track streams we're already forwarding
   private isRecreatingConnections: boolean = false; // Prevent infinite loop when recreating connections
   private pendingIceCandidates: Map<string, RTCIceCandidateInit[]> = new Map(); // Queue ICE candidates until remote description is set
+  // Short ID for log prefixing — set once participantId is known
+  private logId: string = '?';
 
   constructor(config: RelayMeshClientConfig) {
     super();
@@ -119,6 +121,8 @@ export class RelayMeshClient extends EventEmitter {
   async joinConference(conferenceId: string): Promise<ConferenceInfo> {
     // Transition to joining state
     const participantId = this.generateParticipantId();
+    // Set short log ID for easy identification in multi-tab scenarios
+    this.logId = participantId.slice(-8);
     await this.stateMachine.startJoin(conferenceId, participantId);
 
     try {
@@ -138,13 +142,13 @@ export class RelayMeshClient extends EventEmitter {
       
       // Set up media handler events
       this.mediaHandler.onRemoteStream((stream) => {
-        console.log('[RelayMeshClient] ========================================');
-        console.log('[RelayMeshClient] REMOTE STREAM RECEIVED');
-        console.log('[RelayMeshClient] From participant:', stream.participantId);
-        console.log('[RelayMeshClient] Stream ID:', stream.streamId);
-        console.log('[RelayMeshClient] Current role:', this.currentRole);
-        console.log('[RelayMeshClient] Tracks:', stream.tracks.map(t => `${t.kind} (${t.id})`));
-        console.log('[RelayMeshClient] ========================================');
+        const myId = this.stateMachine.getParticipantId();
+        console.log(`[RMC:${this.logId}] ===== REMOTE STREAM RECEIVED =====`);
+        console.log(`[RMC:${this.logId}] From participant: ${stream.participantId}`);
+        console.log(`[RMC:${this.logId}] Stream ID: ${stream.streamId}`);
+        console.log(`[RMC:${this.logId}] Current role: ${this.currentRole}`);
+        console.log(`[RMC:${this.logId}] Tracks: ${stream.tracks.map(t => `${t.kind}(${t.id})`).join(', ')}`);
+        console.log(`[RMC:${this.logId}] isRecreatingConnections: ${this.isRecreatingConnections}`);
         
         // ALWAYS emit the remote stream event so the UI can display it
         // This is critical - relays need to display streams they receive, not just forward them
@@ -160,7 +164,7 @@ export class RelayMeshClient extends EventEmitter {
           
           // Only trigger reconnection if this is a NEW stream we haven't seen before
           if (!this.forwardedStreamIds.has(streamKey)) {
-            console.log('[RelayMeshClient] Relay received new stream, checking if forwarding is needed');
+            console.log(`[RMC:${this.logId}] Relay received NEW stream ${streamKey}, checking forwarding`);
             this.forwardedStreamIds.add(streamKey);
             
             // Check if we have peers to forward to
@@ -176,31 +180,16 @@ export class RelayMeshClient extends EventEmitter {
             // This handles the 2-relay scenario where one relay has an empty group
             const shouldForward = (totalPeers > 1 || hasOtherRelays) && (hasGroupMembers || hasOtherRelays);
             
-            console.log('[RelayMeshClient] Forwarding check:');
-            console.log('[RelayMeshClient]   - Total peers:', totalPeers);
-            console.log('[RelayMeshClient]   - Connected peers:', connectedPeers.length);
-            console.log('[RelayMeshClient]   - Group members:', myGroup?.regularNodeIds.length || 0);
-            console.log('[RelayMeshClient]   - Other relays:', this.currentTopology.relayNodes.length - 1);
-            console.log('[RelayMeshClient]   - Has other relays:', hasOtherRelays);
-            console.log('[RelayMeshClient]   - Should forward:', shouldForward);
+            console.log(`[RMC:${this.logId}] Forwarding check: totalPeers=${totalPeers} connectedPeers=${connectedPeers.length} groupMembers=${myGroup?.regularNodeIds.length ?? 0} otherRelays=${this.currentTopology.relayNodes.length - 1} hasOtherRelays=${hasOtherRelays} shouldForward=${shouldForward}`);
             
-            // Only recreate connections if we have multiple peers to forward to
-            // Examples:
-            // - 2-person (1 relay + 1 regular): totalPeers = 1, hasOtherRelays = false, shouldForward = false
-            // - 3-person (2 relays, one with 1 member, one with 0): hasOtherRelays = true, shouldForward = true
-            // - 3-person (1 relay + 2 regulars): totalPeers = 2, shouldForward = true
             if (connectedPeers.length > 0 && shouldForward) {
-              console.log('[RelayMeshClient] ✓ Relay forwarding new stream to connected peers');
-              // Forward the new stream directly to all connected peers via renegotiation.
-              // This avoids tearing down and rebuilding connections unnecessarily.
-              // Note: we do NOT check isRecreatingConnections here — forwarding is safe
-              // even during connection recreation (it just adds tracks to existing connections).
+              console.log(`[RMC:${this.logId}] ✓ Calling forwardNewStreamToConnectedPeers for stream from ${stream.participantId}`);
               this.forwardNewStreamToConnectedPeers(stream);
             } else {
-              console.log('[RelayMeshClient] ✗ Relay will NOT forward stream - no forwarding needed (2-person conference)');
+              console.log(`[RMC:${this.logId}] ✗ NOT forwarding: connectedPeers=${connectedPeers.length} shouldForward=${shouldForward}`);
             }
           } else {
-            console.log('[RelayMeshClient] Stream already seen, skipping forwarding check');
+            console.log(`[RMC:${this.logId}] Stream ${streamKey} already seen, skipping forwarding`);
           }
         }
       });
@@ -517,10 +506,10 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private async handleTopologyUpdate(message: TopologyUpdateMessage): Promise<void> {
-    console.log('[RelayMeshClient] Received topology update:', message.topology);
-    console.log('[RelayMeshClient] Topology groups:', message.topology.groups);
-    console.log('[RelayMeshClient] Topology relay nodes:', message.topology.relayNodes);
-    console.log('[RelayMeshClient] Topology version:', message.topology.version, 'timestamp:', message.topology.timestamp);
+    console.log(`[RMC:${this.logId}] Received topology update:`, message.topology);
+    console.log(`[RMC:${this.logId}] Topology groups:`, message.topology.groups);
+    console.log(`[RMC:${this.logId}] Topology relay nodes:`, message.topology.relayNodes);
+    console.log(`[RMC:${this.logId}] Topology version:`, message.topology.version, 'timestamp:', message.topology.timestamp);
     
     // Only accept topology updates that are newer than our current topology
     // This prevents race conditions when multiple clients broadcast topology updates
@@ -996,63 +985,55 @@ export class RelayMeshClient extends EventEmitter {
        * @param stream - The new remote stream to forward
        */
       private forwardNewStreamToConnectedPeers(stream: import('./media-handler').MediaStream): void {
+        const tag = `[RMC:${this.logId}][fwd]`;
         if (!this.mediaHandler) {
-          console.warn('[RelayMeshClient] forwardNewStreamToConnectedPeers: no mediaHandler');
+          console.warn(`${tag} no mediaHandler`);
           return;
         }
 
         const remoteStreams = this.mediaHandler.getRemoteStreams();
-        console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: remoteStreams keys=[${Array.from(remoteStreams.keys()).join(', ')}]`);
+        console.log(`${tag} remoteStreams keys=[${Array.from(remoteStreams.keys()).join(', ')}]`);
         const sourceStream = remoteStreams.get(stream.participantId);
 
         if (!sourceStream) {
-          console.warn(`[RelayMeshClient] forwardNewStreamToConnectedPeers: source stream NOT FOUND for ${stream.participantId} - remoteStreams has ${remoteStreams.size} entries`);
+          console.warn(`${tag} source stream NOT FOUND for ${stream.participantId} (${remoteStreams.size} entries in map)`);
           return;
         }
 
-        console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: sourceStream id=${sourceStream.id} tracks=${sourceStream.getTracks().map(t => t.kind).join(',')}`);
+        console.log(`${tag} sourceStream id=${sourceStream.id} tracks=${sourceStream.getTracks().map(t => t.kind).join(',')}`);
 
         const connectedPeers = this.mediaHandler.getConnectedPeers();
-        console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: forwarding stream from ${stream.participantId} to peers=[${connectedPeers.join(', ')}]`);
+        console.log(`${tag} forwarding stream from ${stream.participantId} to peers=[${connectedPeers.join(', ')}]`);
 
         for (const peerId of connectedPeers) {
-          // Don't forward a stream back to its source
           if (peerId === stream.participantId) {
-            console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: skipping source peer ${peerId}`);
+            console.log(`${tag} skipping source peer ${peerId}`);
             continue;
           }
 
           const peerConnection = this.mediaHandler.getPeerConnection(peerId);
           if (!peerConnection) {
-            console.warn(`[RelayMeshClient] forwardNewStreamToConnectedPeers: no peerConnection for ${peerId}`);
+            console.warn(`${tag} no peerConnection for ${peerId}`);
             continue;
           }
 
-          console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: adding tracks to ${peerId}, signalingState=${peerConnection.signalingState}, connectionState=${peerConnection.connectionState}`);
-
-          // Check existing senders before adding
           const sendersBefore = peerConnection.getSenders().map(s => s.track?.kind ?? 'null');
-          console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: senders before=[${sendersBefore.join(', ')}]`);
+          console.log(`${tag} → ${peerId} signalingState=${peerConnection.signalingState} connectionState=${peerConnection.connectionState} sendersBefore=[${sendersBefore.join(', ')}]`);
 
-          // Pass originalParticipantId so the receiver can attribute the stream correctly
           this.mediaHandler.addRemoteStreamForRelay(peerConnection, sourceStream, stream.participantId);
 
           const sendersAfter = peerConnection.getSenders().map(s => s.track?.kind ?? 'null');
-          console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: senders after=[${sendersAfter.join(', ')}]`);
+          console.log(`${tag} → ${peerId} sendersAfter=[${sendersAfter.join(', ')}]`);
 
-          // Build the full stream map for this peer (all forwarded streams, not just the new one)
           const streamMap: Record<string, string> = {};
           for (const [sourceId, remoteStream] of remoteStreams.entries()) {
             if (sourceId !== peerId) {
               streamMap[remoteStream.id] = sourceId;
             }
           }
-          console.log(`[RelayMeshClient] forwardNewStreamToConnectedPeers: streamMap for ${peerId}=`, streamMap);
+          console.log(`${tag} → ${peerId} streamMap=`, streamMap);
 
-          // Send updated stream map so the receiver knows all stream→participant mappings
           this.mediaHandler.sendRelayStreamMap(peerId, peerConnection, streamMap);
-
-          // Renegotiate the connection to add the new tracks
           this.renegotiateConnection(peerId, peerConnection);
         }
       }
@@ -1075,25 +1056,25 @@ export class RelayMeshClient extends EventEmitter {
       }
 
       try {
-        console.log(`[RelayMeshClient] renegotiateConnection: peerId=${peerId} signalingState=${peerConnection.signalingState} connectionState=${peerConnection.connectionState}`);
+        console.log(`[RMC:${this.logId}][renegotiate] peerId=${peerId} signalingState=${peerConnection.signalingState} connectionState=${peerConnection.connectionState}`);
         if (peerConnection.signalingState !== 'stable') {
-          console.log(`[RelayMeshClient] renegotiateConnection: SKIPPED for ${peerId} - not stable (state=${peerConnection.signalingState})`);
+          console.log(`[RMC:${this.logId}][renegotiate] SKIPPED for ${peerId} - not stable`);
           return;
         }
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
         this.signalingClient.sendWebRTCOffer(peerId, offer);
-        console.log(`[RelayMeshClient] renegotiateConnection: offer sent to ${peerId}`);
+        console.log(`[RMC:${this.logId}][renegotiate] offer sent to ${peerId}`);
       } catch (error) {
-        console.error(`[RelayMeshClient] renegotiateConnection: FAILED for ${peerId}:`, error);
+        console.error(`[RMC:${this.logId}][renegotiate] FAILED for ${peerId}:`, error);
       }
     }
 
 
   private async updateConnections(): Promise<void> {
-    console.log('[RelayMeshClient] updateConnections called');
-    console.log('[RelayMeshClient] Current topology:', this.currentTopology);
-    console.log('[RelayMeshClient] Media handler exists:', !!this.mediaHandler);
+    console.log(`[RMC:${this.logId}] updateConnections called, role=${this.currentRole}`);
+    console.log(`[RMC:${this.logId}] Current topology:`, this.currentTopology);
+    console.log(`[RMC:${this.logId}] Media handler exists:`, !!this.mediaHandler);
     
     if (!this.currentTopology || !this.mediaHandler) {
       console.log('[RelayMeshClient] Skipping updateConnections - missing topology or media handler');
@@ -1159,32 +1140,21 @@ export class RelayMeshClient extends EventEmitter {
                                  currentConnections.some(id => !targetSet.has(id));
       
       if (shouldForward && connectionsChanged) {
-        console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams and peers to forward to, recreating all connections`);
+        console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams, connections changed - closing only removed connections`);
         
-        // Set flag to prevent infinite loop
-        this.isRecreatingConnections = true;
-        
-        // Emit event to notify UI to clear stream cache
-        this.emit('connectionsRecreating');
-        
-        // Clear forwarded streams tracking for streams we're about to recreate
-        // This allows them to be re-tracked with new stream IDs after recreation
-        for (const [sourceParticipantId, _] of remoteStreams.entries()) {
-          // Remove all stream IDs from this participant
-          const keysToDelete = Array.from(this.forwardedStreamIds).filter(key => key.startsWith(`${sourceParticipantId}-`));
-          keysToDelete.forEach(key => this.forwardedStreamIds.delete(key));
-        }
-        
+        // Only close connections that are no longer in the target set.
+        // Keep existing connections that are staying — tearing them down causes
+        // streams to be lost and re-received, creating a race where forwarding
+        // to new peers fails because the source stream hasn't arrived yet.
         for (const remoteId of currentConnections) {
-          if (targetConnections.includes(remoteId)) {
-            console.log('[RelayMeshClient] Closing connection to recreate with forwarded streams:', remoteId);
-          } else {
+          if (!targetConnections.includes(remoteId)) {
             console.log('[RelayMeshClient] Closing stale connection no longer in target list:', remoteId);
+            this.mediaHandler.closePeerConnection(remoteId);
           }
-          this.mediaHandler.closePeerConnection(remoteId);
         }
-        // Clear current connections list since we're recreating all
-        currentConnections.length = 0;
+        // Don't clear currentConnections — the loop below uses it to skip already-connected peers.
+        // New peers (in targetConnections but not currentConnections) will get streams forwarded
+        // in the new-connection creation block below.
       } else if (shouldForward && !connectionsChanged) {
         console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams but connections unchanged, skipping recreation`);
         // Still close any stale connections not in target
@@ -1282,13 +1252,11 @@ export class RelayMeshClient extends EventEmitter {
       }
     }
     
-    // Clear the recreating flag after a delay to allow streams to be received
-    // This prevents the onRemoteStream handler from triggering another recreation
-    // while we're still processing the current one
+    // isRecreatingConnections is no longer used for full teardown, but kept as a guard
+    // against topology re-evaluation loops during connection setup.
     setTimeout(() => {
       this.isRecreatingConnections = false;
-      console.log('[RelayMeshClient] Connection recreation complete, ready for new streams');
-    }, 2000); // 2 second delay to ensure all streams are received
+    }, 500);
   }
 
   private getTargetConnections(participantId: string): string[] {
