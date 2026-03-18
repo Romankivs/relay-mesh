@@ -305,9 +305,9 @@
 
     <script type="module">
         // Using the ES module browser bundle (with cache buster)
-        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=40';
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=75';
 
-        console.log('[Simple Client] Version 1.2.4 - Join muted by default');
+        console.log('[Simple Client] Version 1.4.3 - added detailed relay forwarding diagnostics');
         console.log('[Simple Client] Checking for getLocalStream method...');
         
         // Generate random username on page load
@@ -403,6 +403,41 @@
             }
         }
 
+        // Probe WebRTC stats for a track to check if RTP packets are arriving
+        async function probeTrackStats(participantId, track) {
+            try {
+                // Find the peer connection that has this track as a receiver
+                let statsReport = null;
+                for (const [, el] of remoteVideoElements) {
+                    // We don't have direct PC access here; use the client's internal method if available
+                }
+                // Use the global client to get stats
+                if (!client) return;
+                const pcs = client['mediaHandler']?.['peerConnections'];
+                if (!pcs) return;
+                for (const [peerId, pc] of pcs) {
+                    const receivers = pc.getReceivers();
+                    const receiver = receivers.find(r => r.track === track);
+                    if (receiver) {
+                        const stats = await pc.getStats(track);
+                        let framesReceived = 0, packetsReceived = 0, bytesReceived = 0;
+                        stats.forEach(s => {
+                            if (s.type === 'inbound-rtp' && s.kind === 'video') {
+                                framesReceived = s.framesReceived ?? 0;
+                                packetsReceived = s.packetsReceived ?? 0;
+                                bytesReceived = s.bytesReceived ?? 0;
+                            }
+                        });
+                        console.log(`[RTPStats] ${participantId.slice(-8)} via ${peerId.slice(-8)}: framesReceived=${framesReceived} packetsReceived=${packetsReceived} bytesReceived=${bytesReceived} trackMuted=${track.muted} trackReadyState=${track.readyState}`);
+                        return;
+                    }
+                }
+                console.log(`[RTPStats] ${participantId.slice(-8)}: no receiver found for track ${track.id.slice(0,8)}`);
+            } catch(e) {
+                console.error('[RTPStats] error:', e);
+            }
+        }
+
         function addVideoElement(stream, participantId, label, isLocal = false) {
             console.log('[addVideoElement] Called with:', { participantId, label, isLocal, hasStream: !!stream });
             
@@ -425,14 +460,68 @@
             video.playsInline = true;
             if (isLocal) video.muted = true;
             
-            // Handle play promise to avoid autoplay issues
-            video.play().then(() => {
-                console.log('[addVideoElement] Video playing for:', participantId);
-            }).catch(err => {
-                console.error('[addVideoElement] Error playing video for:', participantId, err);
-            });
+            // Debug: log when video gets metadata or stalls
+            video.onloadedmetadata = () => console.log('[addVideoElement] loadedmetadata for:', participantId, 'videoWidth:', video.videoWidth, 'videoHeight:', video.videoHeight);
+            video.onloadeddata = () => console.log('[addVideoElement] loadeddata for:', participantId);
+            video.oncanplay = () => console.log('[addVideoElement] canplay for:', participantId);
+            video.onstalled = () => console.warn('[addVideoElement] stalled for:', participantId);
+            video.onwaiting = () => console.warn('[addVideoElement] waiting for:', participantId);
+            
+            // Check if any video track is currently muted (no data flowing yet — common for relayed streams)
+            const videoTracks = stream.getVideoTracks();
+            const hasMutedVideoTrack = videoTracks.some(t => t.muted);
+
+            // Always attempt play immediately — autoplay + srcObject handles most cases.
+            // We also set up onunmute to retry play() when data starts flowing.
+            const attemptPlay = () => {
+                video.play().then(() => {
+                    console.log('[addVideoElement] Video playing for:', participantId);
+                }).catch(err => {
+                    // AbortError means a new load interrupted us — ignore, the new load will play
+                    if (err.name === 'AbortError') return;
+                    console.error('[addVideoElement] Error playing video for:', participantId, err);
+                    if (err.name === 'NotAllowedError') {
+                        video.muted = true;
+                        video.play().then(() => console.log('[addVideoElement] Video playing (muted) for:', participantId))
+                                   .catch(e => console.error('[addVideoElement] Still failed muted for:', participantId, e));
+                    }
+                });
+            };
+
+            attemptPlay();
+
+            if (hasMutedVideoTrack) {
+                console.log('[addVideoElement] Video track is muted for:', participantId, '- will retry play on unmute');
+                videoTracks.forEach(track => {
+                    if (track.muted) {
+                        track.onunmute = () => {
+                            console.log('[addVideoElement] Video track unmuted for:', participantId, '- retrying play');
+                            console.log('[addVideoElement] Track state at unmute:', {
+                                kind: track.kind, readyState: track.readyState,
+                                enabled: track.enabled, muted: track.muted,
+                                id: track.id.slice(0, 8)
+                            });
+                            attemptPlay();
+                            // Poll WebRTC stats 1s after unmute to check if RTP packets are arriving
+                            setTimeout(() => probeTrackStats(participantId, track), 1000);
+                            setTimeout(() => probeTrackStats(participantId, track), 3000);
+                        };
+                        setTimeout(() => {
+                            if (!track.muted) {
+                                console.log('[addVideoElement] Track already unmuted (missed event) for:', participantId, '- retrying play');
+                                attemptPlay();
+                                setTimeout(() => probeTrackStats(participantId, track), 1000);
+                            }
+                        }, 500);
+                    }
+                });
+            }
             
             console.log('[addVideoElement] Video element created, stream tracks:', stream.getTracks().length);
+            // Log track states for debugging
+            stream.getTracks().forEach(t => {
+                console.log(`[addVideoElement] Track: kind=${t.kind} readyState=${t.readyState} enabled=${t.enabled} muted=${t.muted} id=${t.id.slice(0,8)}`);
+            });
 
             const labelDiv = document.createElement('div');
             labelDiv.className = 'video-label';
@@ -679,8 +768,11 @@
                     console.log('[Remote Stream] Audio tracks:', audioTracks.length);
                     console.log('[Remote Stream] Video tracks:', videoTracks.length);
                     
-                    // Create a browser MediaStream from the tracks for playback
-                    const browserStream = new MediaStream(stream.tracks);
+                    // Use the native stream object directly if available (avoids issues with
+                    // re-wrapping relay-forwarded tracks in a new MediaStream).
+                    // Fall back to constructing one from tracks for backwards compatibility.
+                    const browserStream = stream.nativeStream || new MediaStream(stream.tracks);
+                    console.log('[Remote Stream] Using', stream.nativeStream ? 'nativeStream' : 'new MediaStream(tracks)', 'for', stream.participantId);
                     
                     // Add video element ONLY if stream has video tracks
                     if (videoTracks.length > 0 && !remoteVideoElements.has(stream.participantId)) {

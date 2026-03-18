@@ -63,6 +63,9 @@ export class RelayMeshClient extends EventEmitter {
   private isRecreatingConnections: boolean = false; // Prevent infinite loop when recreating connections
   private pendingIceCandidates: Map<string, RTCIceCandidateInit[]> = new Map(); // Queue ICE candidates until remote description is set
   private streamMapRefreshInterval: NodeJS.Timeout | null = null; // Periodic stream map refresh for relay nodes
+  private lastSentStreamMaps: Map<string, string> = new Map(); // Dedup: last JSON sent per peer
+  // Peers for which onnegotiationneeded should be suppressed (updateConnections is still setting up)
+  private suppressNegotiationFor: Set<string> = new Set();
   // Short ID for log prefixing — set once participantId is known
   private logId: string = '?';
 
@@ -143,13 +146,7 @@ export class RelayMeshClient extends EventEmitter {
       
       // Set up media handler events
       this.mediaHandler.onRemoteStream((stream) => {
-        const myId = this.stateMachine.getParticipantId();
-        console.log(`[RMC:${this.logId}] ===== REMOTE STREAM RECEIVED =====`);
-        console.log(`[RMC:${this.logId}] From participant: ${stream.participantId}`);
-        console.log(`[RMC:${this.logId}] Stream ID: ${stream.streamId}`);
-        console.log(`[RMC:${this.logId}] Current role: ${this.currentRole}`);
-        console.log(`[RMC:${this.logId}] Tracks: ${stream.tracks.map(t => `${t.kind}(${t.id})`).join(', ')}`);
-        console.log(`[RMC:${this.logId}] isRecreatingConnections: ${this.isRecreatingConnections}`);
+        console.log(`[RMC:${this.logId}] remoteStream from=${stream.participantId.slice(-8)} stream=${stream.streamId.slice(0,8)} role=${this.currentRole}`);
         
         // ALWAYS emit the remote stream event so the UI can display it
         // This is critical - relays need to display streams they receive, not just forward them
@@ -160,38 +157,34 @@ export class RelayMeshClient extends EventEmitter {
           const participantId = this.stateMachine.getParticipantId();
           if (!participantId) return;
           
-          // Create a unique identifier for this stream
+          // Key by participantId only — once we've forwarded a participant's stream,
+          // don't re-forward when the other relay sends a new synthetic stream ID
+          // for the same participant (which happens on every renegotiation).
           const streamKey = `${stream.participantId}-${stream.streamId}`;
           
-          // Only trigger reconnection if this is a NEW stream we haven't seen before
-          if (!this.forwardedStreamIds.has(streamKey)) {
-            console.log(`[RMC:${this.logId}] Relay received NEW stream ${streamKey}, checking forwarding`);
-            console.log(`[RMC:${this.logId}] forwardedStreamIds=[${Array.from(this.forwardedStreamIds).join(', ')}]`);
-            this.forwardedStreamIds.add(streamKey);
+          console.log(`[RMC:${this.logId}][onRemoteStream] received stream from ${stream.participantId.slice(-8)} streamId=${stream.streamId.slice(0,8)} alreadyForwarded=${this.forwardedStreamIds.has(stream.participantId)}`);
+          
+          // Only trigger reconnection if this is a NEW participant stream we haven't forwarded
+          if (!this.forwardedStreamIds.has(stream.participantId)) {
+            console.log(`[RMC:${this.logId}][onRemoteStream] NEW stream from ${stream.participantId.slice(-8)}, forwarding`);
+            this.forwardedStreamIds.add(stream.participantId);
             
-            // Check if we have peers to forward to
             const connectedPeers = this.mediaHandler.getConnectedPeers();
             const myGroup = this.currentTopology.groups.find(g => g.relayNodeId === participantId);
             const hasGroupMembers = myGroup && myGroup.regularNodeIds.length > 0;
             const hasOtherRelays = this.currentTopology.relayNodes.filter(id => id !== participantId).length > 0;
-            
-            // Count total peers (group members + other relays)
             const totalPeers = (myGroup?.regularNodeIds.length || 0) + (this.currentTopology.relayNodes.length - 1);
-            
-            // Use the same forwarding logic as updateConnections()
-            // This handles the 2-relay scenario where one relay has an empty group
             const shouldForward = (totalPeers > 1 || hasOtherRelays) && (hasGroupMembers || hasOtherRelays);
             
-            console.log(`[RMC:${this.logId}] Forwarding check: totalPeers=${totalPeers} connectedPeers=${connectedPeers.length} groupMembers=${myGroup?.regularNodeIds.length ?? 0} otherRelays=${this.currentTopology.relayNodes.length - 1} hasOtherRelays=${hasOtherRelays} shouldForward=${shouldForward}`);
+            console.log(`[RMC:${this.logId}][onRemoteStream] connectedPeers=${connectedPeers.length} hasGroupMembers=${hasGroupMembers} hasOtherRelays=${hasOtherRelays} shouldForward=${shouldForward}`);
             
             if (connectedPeers.length > 0 && shouldForward) {
-              console.log(`[RMC:${this.logId}] ✓ Calling forwardNewStreamToConnectedPeers for stream from ${stream.participantId}`);
               this.forwardNewStreamToConnectedPeers(stream);
             } else {
-              console.log(`[RMC:${this.logId}] ✗ NOT forwarding: connectedPeers=${connectedPeers.length} shouldForward=${shouldForward}`);
+              console.log(`[RMC:${this.logId}][onRemoteStream] NOT forwarding: peers=${connectedPeers.length} shouldForward=${shouldForward}`);
             }
           } else {
-            console.log(`[RMC:${this.logId}] Stream ${streamKey} already seen, skipping forwarding`);
+            console.log(`[RMC:${this.logId}][onRemoteStream] ${stream.participantId.slice(-8)} already forwarded, skipping`);
           }
         }
       });
@@ -201,33 +194,96 @@ export class RelayMeshClient extends EventEmitter {
         this.signalingClient.sendICECandidate(remoteParticipantId, candidate);
       });
 
-      // When a stream resolves (pending→attributed), relay nodes send updated stream maps
-      // to all connected peers so they can re-attribute any already-emitted streams.
+      // When the browser fires onnegotiationneeded (e.g. after addTrack for relay forwarding),
+      // create a new offer so the remote peer learns about the new tracks.
+      this.mediaHandler.onNegotiationNeeded((peerId, pc) => {
+        if (this.currentRole === 'relay') {
+          if (this.suppressNegotiationFor.has(peerId)) {
+            console.log(`[RMC:${this.logId}][negotiationNeeded] suppressed for ${peerId.slice(-8)} (updateConnections in progress)`);
+            return;
+          }
+          const senders = pc.getSenders();
+          console.log(`[RMC:${this.logId}][negotiationNeeded] triggered for ${peerId.slice(-8)} signalingState=${pc.signalingState} senders=${senders.length} tracks=[${senders.map(s => s.track?.kind ?? 'null').join(', ')}]`);
+          this.renegotiateConnection(peerId, pc);
+        }
+      });
+
+      // When a relay-stream-map reveals a participant we don't know about yet,
+      // emit participantJoined so the UI can register their name/display.
+      this.mediaHandler.onUnknownParticipant((unknownId) => {
+        if (!this.allMetrics.has(unknownId)) {
+          console.log(`[RMC:${this.logId}] Discovered unknown participant via relay-stream-map: ${unknownId}`);
+          this.allMetrics.set(unknownId, {
+            participantId: unknownId,
+            timestamp: Date.now(),
+            bandwidth: { uploadMbps: 5.0, downloadMbps: 10.0, measurementConfidence: 0.1 },
+            natType: 0,
+            latency: { averageRttMs: 50, minRttMs: 50, maxRttMs: 50, measurements: new Map() },
+            stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
+            device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
+          });
+          this.emit('participantJoined', { participantId: unknownId, participantName: undefined });
+        }
+      });
+
+      // When a stream resolves (pending→attributed), relay nodes:
+      // 1. Forward the stream tracks to all connected peers (if not already forwarded)
+      // 2. Send updated stream maps so peers can re-attribute already-emitted streams
       this.mediaHandler.onStreamResolved((resolvedParticipantId, resolvedStream) => {
         if (this.currentRole !== 'relay' || !this.mediaHandler) return;
         const myId = this.stateMachine.getParticipantId();
         if (!myId) return;
 
         const connectedPeers = this.mediaHandler.getConnectedPeers();
-        const remoteStreams = this.mediaHandler.getRemoteStreams();
-        console.log(`[RMC:${this.logId}][streamResolved] ${resolvedParticipantId} resolved, sending updated maps to ${connectedPeers.length} peers`);
+        console.log(`[RMC:${this.logId}][streamResolved] ${resolvedParticipantId.slice(-8)} resolved streamId=${resolvedStream.id.slice(0,8)}, forwarding+mapping to ${connectedPeers.length} peers: [${connectedPeers.map(p => p.slice(-8)).join(', ')}]`);
+
+        // Check if we've already forwarded this participant's stream
+        // Key by participantId only — stream ID changes on every renegotiation
+        const alreadyForwarded = this.forwardedStreamIds.has(resolvedParticipantId);
+        console.log(`[RMC:${this.logId}][streamResolved] alreadyForwarded=${alreadyForwarded} forwardedStreamIds=[${Array.from(this.forwardedStreamIds).map(id => id.slice(-8)).join(', ')}]`);
+
+        // Get the peer we received this stream from (to avoid forwarding back to source)
+        const sourcePeer = this.mediaHandler.getStreamSourcePeer(resolvedParticipantId);
+        console.log(`[RMC:${this.logId}][streamResolved] sourcePeer for ${resolvedParticipantId.slice(-8)} is ${sourcePeer?.slice(-8) ?? 'unknown'}`);
 
         for (const peerId of connectedPeers) {
-          if (peerId === resolvedParticipantId) continue;
-          const pc = this.mediaHandler.getPeerConnection(peerId);
-          if (!pc) continue;
+          if (peerId === resolvedParticipantId) {
+            console.log(`[RMC:${this.logId}][streamResolved] skipping source peer ${peerId.slice(-8)} (stream owner)`);
+            continue;
+          }
 
-          // Build full stream map for this peer
-          const streamMap: Record<string, string> = {};
-          for (const [sourceId, stream] of remoteStreams.entries()) {
-            if (sourceId !== peerId) {
-              streamMap[stream.id] = sourceId;
+          // Don't forward back to the peer we received this stream from
+          if (sourcePeer && peerId === sourcePeer) {
+            console.log(`[RMC:${this.logId}][streamResolved] skipping source peer ${peerId.slice(-8)} (received from this peer)`);
+            continue;
+          }
+
+          const pc = this.mediaHandler.getPeerConnection(peerId);
+          if (!pc) {
+            console.warn(`[RMC:${this.logId}][streamResolved] no PC for ${peerId.slice(-8)}`);
+            continue;
+          }
+
+          // Forward tracks if not already done
+          if (!alreadyForwarded) {
+            console.log(`[RMC:${this.logId}][streamResolved] forwarding tracks of ${resolvedParticipantId.slice(-8)} to ${peerId.slice(-8)}`);
+            // Don't send stream map in callback - it will be sent after renegotiation completes in handleWebRTCAnswer
+            this.mediaHandler.addRemoteStreamForRelay(pc, resolvedStream, resolvedParticipantId);
+            // onnegotiationneeded will fire and trigger renegotiation
+          } else {
+            // Already forwarded — just send updated stream map
+            const streamMap = this.buildStreamMapForPeer(peerId);
+            if (Object.keys(streamMap).length > 0) {
+              console.log(`[RMC:${this.logId}][streamResolved] sending updated map to ${peerId.slice(-8)}:`, streamMap);
+              this.mediaHandler.sendRelayStreamMap(peerId, pc, streamMap);
             }
           }
-          if (Object.keys(streamMap).length > 0) {
-            console.log(`[RMC:${this.logId}][streamResolved] sending updated map to ${peerId.slice(-8)}:`, streamMap);
-            this.mediaHandler.sendRelayStreamMap(peerId, pc, streamMap);
-          }
+        }
+
+        // Mark as forwarded (by participantId) so the onRemoteStream handler doesn't double-forward
+        if (!alreadyForwarded) {
+          this.forwardedStreamIds.add(resolvedParticipantId);
+          console.log(`[RMC:${this.logId}][streamResolved] marked ${resolvedParticipantId.slice(-8)} as forwarded`);
         }
       });
 
@@ -297,6 +353,7 @@ export class RelayMeshClient extends EventEmitter {
     try {
       // Clear forwarded streams tracking
       this.forwardedStreamIds.clear();
+      this.lastSentStreamMaps.clear();
       
       // Stop relay engine if active
       if (this.relayEngine) {
@@ -476,50 +533,38 @@ export class RelayMeshClient extends EventEmitter {
 
     // Handle existing participants information
     if (message.existingParticipants && Array.isArray(message.existingParticipants)) {
-      console.log('[RelayMeshClient] Received existing participants:', message.existingParticipants);
       for (const participant of message.existingParticipants) {
-        console.log('[RelayMeshClient] Emitting participantJoined for existing participant:', participant);
         this.emit('participantJoined', {
           participantId: participant.participantId,
           participantName: participant.participantName,
         });
-        
-        // Add placeholder metrics for existing participants
-        // These will be replaced when we receive their metrics broadcasts
         if (!this.allMetrics.has(participant.participantId)) {
           this.allMetrics.set(participant.participantId, {
             participantId: participant.participantId,
             timestamp: Date.now(),
             bandwidth: { uploadMbps: 5.0, downloadMbps: 10.0, measurementConfidence: 0.1 },
-            natType: 0, // NATType.OPEN
+            natType: 0,
             latency: { averageRttMs: 50, minRttMs: 50, maxRttMs: 50, measurements: new Map() },
             stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
             device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
           });
-          console.log('[RelayMeshClient] Added placeholder metrics for existing participant:', participant.participantId);
         }
       }
-    } else {
-      console.log('[RelayMeshClient] No existing participants in join-response');
     }
 
     // Immediately add our own participant to allMetrics so count is correct
     // This will be replaced with actual metrics once collection starts
     const participantId = this.stateMachine.getParticipantId();
     if (participantId && !this.allMetrics.has(participantId)) {
-      // Add placeholder metrics for ourselves with reasonable defaults
-      // Using conservative bandwidth values (5 Mbps upload, 10 Mbps download)
-      // to ensure participants are eligible for relay selection until real metrics arrive
       this.allMetrics.set(participantId, {
         participantId,
         timestamp: Date.now(),
         bandwidth: { uploadMbps: 5.0, downloadMbps: 10.0, measurementConfidence: 0.1 },
-        natType: 0, // NATType.OPEN
+        natType: 0,
         latency: { averageRttMs: 50, minRttMs: 50, maxRttMs: 50, measurements: new Map() },
         stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
         device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
       });
-      console.log('[RelayMeshClient] Added self to allMetrics on join with default bandwidth values');
     }
 
     // Complete the join transition
@@ -543,29 +588,15 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private async handleTopologyUpdate(message: TopologyUpdateMessage): Promise<void> {
-    console.log(`[RMC:${this.logId}] Received topology update:`, message.topology);
-    console.log(`[RMC:${this.logId}] Topology groups:`, message.topology.groups);
-    console.log(`[RMC:${this.logId}] Topology relay nodes:`, message.topology.relayNodes);
-    console.log(`[RMC:${this.logId}] Topology version:`, message.topology.version, 'timestamp:', message.topology.timestamp);
+    console.log(`[RMC:${this.logId}] topology-update v${message.topology.version} relays=${message.topology.relayNodes.map(r=>r.slice(-8))} groups=${JSON.stringify(message.topology.groups.map(g=>({r:g.relayNodeId.slice(-8),m:g.regularNodeIds.map(m=>m.slice(-8))})))}`);
     
-    // Only accept topology updates that are newer than our current topology
-    // This prevents race conditions when multiple clients broadcast topology updates
     if (this.currentTopology) {
-      const currentVersion = this.currentTopology.version;
-      const currentTimestamp = this.currentTopology.timestamp;
-      const newVersion = message.topology.version;
-      const newTimestamp = message.topology.timestamp;
-      
-      // Compare by version first, then by timestamp as tiebreaker
-      const isNewer = newVersion > currentVersion || 
-                     (newVersion === currentVersion && newTimestamp > currentTimestamp);
-      
+      const isNewer = message.topology.version > this.currentTopology.version || 
+                     (message.topology.version === this.currentTopology.version && message.topology.timestamp > this.currentTopology.timestamp);
       if (!isNewer) {
-        console.log('[RelayMeshClient] Ignoring older/duplicate topology update');
+        console.log(`[RMC:${this.logId}] Ignoring older/duplicate topology`);
         return;
       }
-      
-      console.log('[RelayMeshClient] Accepting newer topology update');
     }
     
     // Check if our role changed
@@ -578,6 +609,40 @@ export class RelayMeshClient extends EventEmitter {
     this.lastTopologyRelayIds = [...message.topology.relayNodes].sort();
     this.emit('topologyUpdate', message.topology);
     
+    // When we're a relay and the topology changes (even if role stays relay),
+    // clear forwardedStreamIds so we re-forward streams to the new peer set.
+    // Example: A=relay leaves → B stays relay but now has A's old group members
+    // as its own group. B must forward C's stream to A (new regular) even though
+    // B already has C in forwardedStreamIds from the old topology.
+    if (this.currentRole === 'relay' && oldRole === 'relay' && newRole === 'relay') {
+      console.log(`[RMC:${this.logId}] Relay topology changed — clearing forwardedStreamIds to re-forward to new peer set`);
+      this.forwardedStreamIds.clear();
+      this.lastSentStreamMaps.clear();
+      // Re-trigger forwarding for all currently known remote streams.
+      // updateConnections() handles NEW connections, but for EXISTING connections
+      // (peers B was already connected to) we must explicitly push the streams.
+      // Use setTimeout(0) so updateConnections() runs first and establishes any
+      // new connections before we try to forward to them.
+      if (this.mediaHandler) {
+        const streamsToForward = Array.from(this.mediaHandler.getRemoteStreams().entries());
+        setTimeout(() => {
+          if (!this.mediaHandler || this.currentRole !== 'relay') return;
+          for (const [sourceParticipantId, remoteStream] of streamsToForward) {
+            const connectedPeers = this.mediaHandler.getConnectedPeers();
+            for (const peerId of connectedPeers) {
+              if (peerId === sourceParticipantId) continue;
+              const pc = this.mediaHandler.getPeerConnection(peerId);
+              if (!pc) continue;
+              console.log(`[RMC:${this.logId}] [topology-change-fwd] forwarding ${sourceParticipantId.slice(-8)} → ${peerId.slice(-8)}`);
+              this.mediaHandler.addRemoteStreamForRelay(pc, remoteStream, sourceParticipantId);
+              this.forwardedStreamIds.add(sourceParticipantId);
+            }
+            // Stream maps will be sent after renegotiation completes in handleWebRTCAnswer
+          }
+        }, 500); // 500ms: let updateConnections() finish establishing new connections first
+      }
+    }
+
     // Emit role change event if role changed
     if (oldRole !== newRole) {
       console.log('[RelayMeshClient] Role changed from', oldRole, 'to', newRole);
@@ -585,13 +650,11 @@ export class RelayMeshClient extends EventEmitter {
       
       // Clear forwarded streams tracking when role changes
       this.forwardedStreamIds.clear();
+      this.lastSentStreamMaps.clear();
       
       this.emit('roleChange', newRole);
       
       // Re-emit all currently known remote streams so the UI can rebuild its video elements.
-      // The UI clears its stream cache on roleChange, so we need to re-deliver streams
-      // that were already received on the old connection.
-      // Use setTimeout to ensure the UI's roleChange handler runs first (clears its cache).
       if (this.mediaHandler) {
         const remoteStreams = this.mediaHandler.getRemoteStreams();
         console.log(`[RelayMeshClient] Re-emitting ${remoteStreams.size} remote streams after role change`);
@@ -625,6 +688,33 @@ export class RelayMeshClient extends EventEmitter {
           this.streamMapRefreshInterval = null;
         }
       }
+
+      // When transitioning regular→relay, existing connections were set up without
+      // forwarding. We must now forward all known streams to existing peers, and send
+      // stream maps so they can attribute the forwarded streams correctly.
+      // Use setTimeout so updateConnections() runs first and establishes any NEW
+      // connections (e.g. to the other relay) before we push streams to existing ones.
+      if (oldRole === 'regular' && newRole === 'relay' && this.mediaHandler) {
+        const streamsToForward = Array.from(this.mediaHandler.getRemoteStreams().entries());
+        console.log(`[RMC:${this.logId}] regular→relay: will forward ${streamsToForward.length} streams to existing peers after updateConnections`);
+        setTimeout(() => {
+          if (!this.mediaHandler || this.currentRole !== 'relay') return;
+          const connectedPeers = this.mediaHandler.getConnectedPeers();
+          console.log(`[RMC:${this.logId}] regular→relay fwd: peers=[${connectedPeers.map(p=>p.slice(-8)).join(',')}] streams=[${streamsToForward.map(([id])=>id.slice(-8)).join(',')}]`);
+          for (const [sourceParticipantId, remoteStream] of streamsToForward) {
+            for (const peerId of connectedPeers) {
+              if (peerId === sourceParticipantId) continue;
+              const pc = this.mediaHandler.getPeerConnection(peerId);
+              if (!pc) continue;
+              console.log(`[RMC:${this.logId}] regular→relay fwd: ${sourceParticipantId.slice(-8)} → ${peerId.slice(-8)}`);
+              // Don't send stream map in callback - it will be sent after renegotiation completes in handleWebRTCAnswer
+              this.mediaHandler.addRemoteStreamForRelay(pc, remoteStream, sourceParticipantId);
+              this.forwardedStreamIds.add(sourceParticipantId);
+            }
+          }
+          // Stream maps will be sent after renegotiation completes in handleWebRTCAnswer
+        }, 500);
+      }
       
       // updateConnections() below will diff current vs target connections and
       // close/open only what's needed — no need to nuke everything here.
@@ -640,7 +730,6 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private handleMetricsBroadcast(message: MetricsBroadcastMessage): void {
-      console.log('[RelayMeshClient] Received metrics broadcast from:', message.from);
 
       // If the received metrics have 0 bandwidth and we already have placeholder metrics with non-zero bandwidth,
       // preserve the placeholder bandwidth values until real measurements are available
@@ -667,58 +756,45 @@ export class RelayMeshClient extends EventEmitter {
 
   private handleParticipantLeft(message: any): void {
     const participantId = message.participantId;
-    console.log('[RelayMeshClient] Participant left:', participantId);
-    
-    // Remove from metrics
+    console.log(`[RMC:${this.logId}] participant left: ${participantId.slice(-8)}`);
     this.allMetrics.delete(participantId);
-    
-    // Emit event for UI
+    if (this.mediaHandler) {
+      this.mediaHandler.removeRemoteStream(participantId);
+      for (const key of this.forwardedStreamIds) {
+        if (key === participantId || key.startsWith(participantId + '-')) {
+          this.forwardedStreamIds.delete(key);
+        }
+      }
+    }
+    this.lastSentStreamMaps.delete(participantId);
     this.emit('participantLeft', participantId);
-    
-    // Re-evaluate topology
     this.evaluateTopology();
   }
 
   private handleParticipantJoined(message: any): void {
     const participantId = message.participantId;
-    console.log('[RelayMeshClient] Participant joined:', participantId);
-    
-    // Add placeholder metrics for the new participant
-    // These will be replaced when we receive their metrics broadcasts
+    console.log(`[RMC:${this.logId}] participant joined: ${participantId.slice(-8)}`);
     if (!this.allMetrics.has(participantId)) {
       this.allMetrics.set(participantId, {
-        participantId: participantId,
+        participantId,
         timestamp: Date.now(),
         bandwidth: { uploadMbps: 5.0, downloadMbps: 10.0, measurementConfidence: 0.1 },
-        natType: 0, // NATType.OPEN
+        natType: 0,
         latency: { averageRttMs: 50, minRttMs: 50, maxRttMs: 50, measurements: new Map() },
         stability: { packetLossPercent: 0, jitterMs: 0, connectionUptime: 0, reconnectionCount: 0 },
         device: { cpuUsagePercent: 0, availableMemoryMB: 0, supportedCodecs: [], hardwareAcceleration: false },
       });
-      console.log('[RelayMeshClient] Added placeholder metrics for new participant:', participantId);
-      
-      // Schedule a delayed update of relay selection data
       setTimeout(() => {
         if (this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
-          console.log('[RelayMeshClient] Delayed relay selection data update after participant joined');
           this.updateRelaySelectionData();
         }
-      }, 1000); // 1 second delay
+      }, 1000);
     }
-    
-    // Immediately broadcast our metrics to the new participant
     if (this.metricsCollector && this.stateMachine.getCurrentState() === ConferenceState.CONNECTED) {
       try {
-        const currentMetrics = this.metricsCollector.getCurrentMetrics();
-        console.log('[RelayMeshClient] Broadcasting metrics to new participant');
-        this.signalingClient.broadcastMetrics(currentMetrics);
-      } catch (error) {
-        // Metrics not ready yet
-        console.log('[RelayMeshClient] Metrics not ready to broadcast to new participant');
-      }
+        this.signalingClient.broadcastMetrics(this.metricsCollector.getCurrentMetrics());
+      } catch (_) {}
     }
-    
-    // Emit event for UI
     this.emit('participantJoined', { participantId, participantName: message.participantName });
   }
 
@@ -779,7 +855,7 @@ export class RelayMeshClient extends EventEmitter {
     // to prevent oscillation feedback loops.
     const relayNodesChanged = !this.arraysEqual(relayNodeIds, this.lastTopologyRelayIds);
     
-    console.log('[RelayMeshClient] Relay comparison - new:', [...relayNodeIds].sort(), 'last broadcast:', [...this.lastTopologyRelayIds].sort(), 'current topology:', [...currentRelayIds].sort(), 'changed:', relayNodesChanged);    
+    console.log(`[RMC:${this.logId}] relays: new=${[...relayNodeIds].sort().map(r=>r.slice(-8))} last=${[...this.lastTopologyRelayIds].sort().map(r=>r.slice(-8))} changed=${relayNodesChanged}`);
     // Check for participant count changes (new/deleted users)
     const participantCountChanged = this.allMetrics.size !== this.lastTopologyMetricsSnapshot.size;
     
@@ -789,14 +865,13 @@ export class RelayMeshClient extends EventEmitter {
       const metricsChangedSignificantly = this.hasSignificantMetricChange(0.3); // 30% threshold
       
       if (!metricsChangedSignificantly) {
-        console.log('[RelayMeshClient] Topology unchanged - same relays, same participants, no significant metric changes');
         return;
       }
     }
     
     // If we get here, something changed - form new topology and check if it's actually different
     if (relayNodesChanged || participantCountChanged) {
-      console.log('[RelayMeshClient] Topology update needed - relay nodes changed:', relayNodesChanged, 'participant count changed:', participantCountChanged);
+      console.log(`[RMC:${this.logId}] topology change: relays=${relayNodesChanged} count=${participantCountChanged}`);
       
       // Leader election: Only the participant with the lowest ID broadcasts topology updates
       // This prevents race conditions when multiple clients try to update topology simultaneously
@@ -805,8 +880,6 @@ export class RelayMeshClient extends EventEmitter {
       const leaderId = allParticipantIds[0];
       
       if (participantId !== leaderId) {
-        console.log('[RelayMeshClient] Not the leader (leader is', leaderId, '), skipping topology broadcast');
-        // Non-leaders still snapshot metrics so participantCountChanged doesn't stay perpetually true
         this.snapshotMetrics();
         return;
       }
@@ -823,21 +896,16 @@ export class RelayMeshClient extends EventEmitter {
         latencyMap
       );
       
-      console.log('[RelayMeshClient] New topology formed:', newTopology);
+      console.log(`[RMC:${this.logId}] new topology: relays=${newTopology.relayNodes.map(r=>r.slice(-8))} groups=${JSON.stringify(newTopology.groups.map(g=>({r:g.relayNodeId.slice(-8),m:g.regularNodeIds.map(m=>m.slice(-8))})))}`);
 
-      // Check if topology actually changed (compare groups, not just relay IDs)
       if (this.topologyEquals(this.currentTopology, newTopology)) {
-        console.log('[RelayMeshClient] Topology unchanged - suppressing broadcast');
-        // Update snapshot to prevent repeated checks
         this.lastTopologyRelayIds = [...relayNodeIds].sort();
         this.snapshotMetrics();
-        // Still ensure connections are up-to-date (e.g. after a role change closed them)
         await this.updateConnections();
         return;
       }
 
-      // Broadcast topology update via signaling
-      console.log('[RelayMeshClient] Broadcasting topology update');
+      console.log(`[RMC:${this.logId}] broadcasting topology update`);
       this.signalingClient.sendTopologyUpdate(newTopology, 'relay-selection');
       
       // Update our local topology immediately (we won't receive our own broadcast)
@@ -849,7 +917,7 @@ export class RelayMeshClient extends EventEmitter {
       
       // Emit role change event if role changed
       if (oldRole !== newRole) {
-        console.log('[RelayMeshClient] Role changed from', oldRole, 'to', newRole);
+        console.log(`[RMC:${this.logId}] role: ${oldRole} → ${newRole}`);
         this.currentRole = newRole;
         this.emit('roleChange', newRole);
         
@@ -880,7 +948,6 @@ export class RelayMeshClient extends EventEmitter {
       this.lastTopologyRelayIds = [...relayNodeIds].sort();
       this.snapshotMetrics();
     } else {
-      console.log('[RelayMeshClient] Topology unchanged - no significant changes detected');
       // Still ensure connections match the current topology (may have been disrupted)
       await this.updateConnections();
     }
@@ -1007,6 +1074,37 @@ export class RelayMeshClient extends EventEmitter {
    * Broadcast the current stream map to all connected peers.
    * Called periodically on relay nodes to ensure late-arriving streams get attributed correctly.
    */
+  /**
+   * Build the full stream map to send to a peer.
+   * Includes all resolved remote streams (excluding the peer itself as source),
+   * plus the relay's own local stream so the receiver can attribute it immediately
+   * without waiting for the 3000ms timeout.
+   */
+  private buildStreamMapForPeer(peerId: string): Record<string, string> {
+    if (!this.mediaHandler) return {};
+    const myId = this.stateMachine.getParticipantId();
+    const streamMap: Record<string, string> = {};
+
+    // Include all resolved remote streams (not from this peer)
+    const remoteStreams = this.mediaHandler.getRemoteStreams();
+    for (const [sourceId, stream] of remoteStreams.entries()) {
+      if (sourceId !== peerId) {
+        streamMap[stream.id] = sourceId;
+      }
+    }
+
+    // Include the relay's own local stream so the receiver doesn't need the 3000ms fallback
+    if (myId) {
+      const localStream = this.mediaHandler.getLocalStream();
+      if (localStream) {
+        streamMap[localStream.id] = myId;
+      }
+    }
+
+    console.log(`[RMC:${this.logId}][buildStreamMap] for peer=${peerId.slice(-8)} remoteStreams=[${Array.from(remoteStreams.entries()).map(([id,s])=>`${id.slice(-8)}→${s.id.slice(0,8)}`).join(',')}] result=`, streamMap);
+    return streamMap;
+  }
+
   private broadcastStreamMaps(): void {
     if (this.currentRole !== 'relay' || !this.mediaHandler) return;
     const remoteStreams = this.mediaHandler.getRemoteStreams();
@@ -1016,20 +1114,18 @@ export class RelayMeshClient extends EventEmitter {
     // Detailed diagnostic log every tick
     console.log(`[RMC:${this.logId}][bcast] remoteStreams=[${Array.from(remoteStreams.entries()).map(([id, s]) => `${id.slice(-8)}→${s.id.slice(0,8)}`).join(', ')}] pending=[${Array.from(pendingStreams.entries()).map(([sid, p]) => `${sid.slice(0,8)}←${p.connectionId.slice(-8)}`).join(', ')}] peers=[${connectedPeers.map(p => p.slice(-8)).join(', ')}]`);
 
-    if (remoteStreams.size === 0 && pendingStreams.size === 0) return;
-
     for (const peerId of connectedPeers) {
       const pc = this.mediaHandler.getPeerConnection(peerId);
       if (!pc) continue;
-      const streamMap: Record<string, string> = {};
-      for (const [sourceId, stream] of remoteStreams.entries()) {
-        if (sourceId !== peerId) {
-          streamMap[stream.id] = sourceId;
-        }
-      }
-      if (Object.keys(streamMap).length > 0) {
-        this.mediaHandler.sendRelayStreamMap(peerId, pc, streamMap);
-      }
+      const streamMap = this.buildStreamMapForPeer(peerId);
+      if (Object.keys(streamMap).length === 0) continue;
+
+      // Only send if the map content changed since last send to this peer
+      const mapJson = JSON.stringify(streamMap);
+      if (this.lastSentStreamMaps.get(peerId) === mapJson) continue;
+
+      this.lastSentStreamMaps.set(peerId, mapJson);
+      this.mediaHandler.sendRelayStreamMap(peerId, pc, streamMap);
     }
   }
 
@@ -1072,65 +1168,68 @@ export class RelayMeshClient extends EventEmitter {
        * @param stream - The new remote stream to forward
        */
       private forwardNewStreamToConnectedPeers(stream: import('./media-handler').MediaStream): void {
-        const tag = `[RMC:${this.logId}][fwd]`;
+        const tag = `[RMC:${this.logId}][fwdLate]`;
+        console.log(`${tag} LATE ARRIVAL: stream from ${stream.participantId.slice(-8)} arrived after connections established`);
         if (!this.mediaHandler) {
           console.warn(`${tag} no mediaHandler`);
           return;
         }
 
         const remoteStreams = this.mediaHandler.getRemoteStreams();
-        console.log(`${tag} remoteStreams keys=[${Array.from(remoteStreams.keys()).join(', ')}]`);
-        console.log(`${tag} forwardedStreamIds=[${Array.from(this.forwardedStreamIds).join(', ')}]`);
+        console.log(`${tag} remoteStreams keys=[${Array.from(remoteStreams.keys()).map(k => k.slice(-8)).join(', ')}]`);
+        console.log(`${tag} forwardedStreamIds=[${Array.from(this.forwardedStreamIds).map(k => k.slice(-8)).join(', ')}]`);
         const sourceStream = remoteStreams.get(stream.participantId);
 
         if (!sourceStream) {
-          console.warn(`${tag} source stream NOT FOUND for ${stream.participantId} (${remoteStreams.size} entries in map)`);
+          console.warn(`${tag} source stream NOT FOUND for ${stream.participantId.slice(-8)} (${remoteStreams.size} entries in map)`);
           return;
         }
 
-        console.log(`${tag} sourceStream id=${sourceStream.id} tracks=${sourceStream.getTracks().map(t => t.kind).join(',')}`);
+        console.log(`${tag} sourceStream id=${sourceStream.id.slice(0,8)} tracks=${sourceStream.getTracks().map(t => t.kind).join(',')}`);
 
         const connectedPeers = this.mediaHandler.getConnectedPeers();
-        console.log(`${tag} forwarding stream from ${stream.participantId} to peers=[${connectedPeers.join(', ')}]`);
+        console.log(`${tag} forwarding stream from ${stream.participantId.slice(-8)} to ${connectedPeers.length} connected peers=[${connectedPeers.map(p => p.slice(-8)).join(', ')}]`);
+
+        // Get the peer we received this stream from (to avoid forwarding back to source)
+        const sourcePeer = this.mediaHandler.getStreamSourcePeer(stream.participantId);
+        console.log(`${tag} sourcePeer for ${stream.participantId.slice(-8)} is ${sourcePeer?.slice(-8) ?? 'unknown'}`);
+
+        let forwardedCount = 0;
+        let skippedCount = 0;
 
         for (const peerId of connectedPeers) {
           if (peerId === stream.participantId) {
-            console.log(`${tag} skipping source peer ${peerId}`);
+            console.log(`${tag} skipping ${peerId.slice(-8)} (stream owner)`);
+            skippedCount++;
+            continue;
+          }
+
+          // Don't forward back to the peer we received this stream from
+          if (sourcePeer && peerId === sourcePeer) {
+            console.log(`${tag} skipping ${peerId.slice(-8)} (received from this peer)`);
+            skippedCount++;
             continue;
           }
 
           const peerConnection = this.mediaHandler.getPeerConnection(peerId);
           if (!peerConnection) {
-            console.warn(`${tag} no peerConnection for ${peerId}`);
+            console.warn(`${tag} no peerConnection for ${peerId.slice(-8)}`);
+            skippedCount++;
             continue;
           }
 
           const sendersBefore = peerConnection.getSenders().map(s => s.track?.kind ?? 'null');
-          console.log(`${tag} → ${peerId} signalingState=${peerConnection.signalingState} connectionState=${peerConnection.connectionState} sendersBefore=[${sendersBefore.join(', ')}]`);
+          console.log(`${tag} → ${peerId.slice(-8)} signalingState=${peerConnection.signalingState} connectionState=${peerConnection.connectionState} sendersBefore=[${sendersBefore.join(', ')}]`);
 
+          // Don't send stream map in callback - it will be sent after renegotiation completes in handleWebRTCAnswer
           this.mediaHandler.addRemoteStreamForRelay(peerConnection, sourceStream, stream.participantId);
-
+          forwardedCount++;
+          
           const sendersAfter = peerConnection.getSenders().map(s => s.track?.kind ?? 'null');
-          console.log(`${tag} → ${peerId} sendersAfter=[${sendersAfter.join(', ')}]`);
-
-          const streamMap: Record<string, string> = {};
-          for (const [sourceId, remoteStream] of remoteStreams.entries()) {
-            if (sourceId !== peerId) {
-              streamMap[remoteStream.id] = sourceId;
-            }
-          }
-          // Also include pending streams (not yet in remoteStreams) so receiver gets full picture
-          const pendingStreams = this.mediaHandler.getPendingStreams();
-          for (const [nativeStreamId, pending] of pendingStreams.entries()) {
-            if (pending.connectionId !== peerId && !(nativeStreamId in streamMap)) {
-              streamMap[nativeStreamId] = pending.connectionId;
-            }
-          }
-          console.log(`${tag} → ${peerId} streamMap=`, streamMap);
-
-          this.mediaHandler.sendRelayStreamMap(peerId, peerConnection, streamMap);
-          this.renegotiateConnection(peerId, peerConnection);
+          console.log(`${tag} → ${peerId.slice(-8)} sendersAfter=[${sendersAfter.join(', ')}]`);
         }
+
+        console.log(`${tag} COMPLETE: forwarded to ${forwardedCount} peers, skipped ${skippedCount} peers`);
       }
 
   /**
@@ -1145,62 +1244,47 @@ export class RelayMeshClient extends EventEmitter {
      * @param peerId - The peer to renegotiate with
      * @param peerConnection - The peer connection to renegotiate
      */
-    private async renegotiateConnection(peerId: string, peerConnection: RTCPeerConnection): Promise<void> {
-      if (!this.signalingClient) {
-        return;
-      }
+    private async renegotiateConnection(peerId: string, peerConnection: RTCPeerConnection, attempt: number = 0): Promise<void> {
+      if (!this.signalingClient) return;
 
       try {
-        console.log(`[RMC:${this.logId}][renegotiate] peerId=${peerId} signalingState=${peerConnection.signalingState} connectionState=${peerConnection.connectionState}`);
-        if (peerConnection.signalingState !== 'stable') {
-          console.log(`[RMC:${this.logId}][renegotiate] SKIPPED for ${peerId} - not stable`);
+        console.log(`[RMC:${this.logId}][renegotiate] peerId=${peerId.slice(-8)} signalingState=${peerConnection.signalingState} connectionState=${peerConnection.connectionState} attempt=${attempt}`);
+
+        if (peerConnection.connectionState === 'closed') {
+          console.log(`[RMC:${this.logId}][renegotiate] ABORTED for ${peerId.slice(-8)} - connection closed`);
           return;
         }
+
+        if (peerConnection.signalingState !== 'stable') {
+          if (attempt >= 5) {
+            console.warn(`[RMC:${this.logId}][renegotiate] GIVING UP for ${peerId.slice(-8)} after ${attempt} attempts`);
+            return;
+          }
+          console.log(`[RMC:${this.logId}][renegotiate] DEFERRED for ${peerId.slice(-8)} - not stable, retry ${attempt + 1} in 500ms`);
+          setTimeout(() => this.renegotiateConnection(peerId, peerConnection, attempt + 1), 500);
+          return;
+        }
+
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
         this.signalingClient.sendWebRTCOffer(peerId, offer);
-        console.log(`[RMC:${this.logId}][renegotiate] offer sent to ${peerId}`);
+        console.log(`[RMC:${this.logId}][renegotiate] offer sent to ${peerId.slice(-8)}`);
       } catch (error) {
-        console.error(`[RMC:${this.logId}][renegotiate] FAILED for ${peerId}:`, error);
+        console.error(`[RMC:${this.logId}][renegotiate] FAILED for ${peerId.slice(-8)}:`, error);
       }
     }
 
 
   private async updateConnections(): Promise<void> {
-    console.log(`[RMC:${this.logId}] updateConnections called, role=${this.currentRole}`);
-    console.log(`[RMC:${this.logId}] Current topology:`, this.currentTopology);
-    console.log(`[RMC:${this.logId}] Media handler exists:`, !!this.mediaHandler);
-    
-    if (!this.currentTopology || !this.mediaHandler) {
-      console.log('[RelayMeshClient] Skipping updateConnections - missing topology or media handler');
-      return;
-    }
-
+    if (!this.currentTopology || !this.mediaHandler) return;
     const participantId = this.stateMachine.getParticipantId();
-    if (!participantId) {
-      console.log('[RelayMeshClient] Skipping updateConnections - no participant ID');
-      return;
-    }
-
-    console.log('[RelayMeshClient] Participant ID:', participantId);
-    console.log('[RelayMeshClient] All metrics participants:', Array.from(this.allMetrics.keys()));
-
-    // Get local stream
+    if (!participantId) return;
     const localStream = this.mediaHandler.getLocalStream();
-    if (!localStream) {
-      console.log('[RelayMeshClient] Skipping updateConnections - no local stream');
-      return;
-    }
+    if (!localStream) return;
 
-    // Determine which participants we should be connected to
     const targetConnections = this.getTargetConnections(participantId);
-    
-    console.log('[RelayMeshClient] Target connections:', targetConnections);
-
-    // Close connections that are no longer needed
     const currentConnections = this.mediaHandler.getActiveConnections();
-    
-    console.log('[RelayMeshClient] Current connections:', currentConnections);
+    console.log(`[RMC:${this.logId}] updateConn role=${this.currentRole} target=[${targetConnections.map(r=>r.slice(-8))}] current=[${currentConnections.map(r=>r.slice(-8))}]`);
     
     // For relay nodes with remote streams, only recreate if we have peers to forward to
     const remoteStreams = this.mediaHandler.getRemoteStreams();
@@ -1235,57 +1319,41 @@ export class RelayMeshClient extends EventEmitter {
                                  currentConnections.some(id => !targetSet.has(id));
       
       if (shouldForward && connectionsChanged) {
-        console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams, connections changed - closing only removed connections`);
-        
-        // Only close connections that are no longer in the target set.
-        // Keep existing connections that are staying — tearing them down causes
-        // streams to be lost and re-received, creating a race where forwarding
-        // to new peers fails because the source stream hasn't arrived yet.
         for (const remoteId of currentConnections) {
           if (!targetConnections.includes(remoteId)) {
-            console.log('[RelayMeshClient] Closing stale connection no longer in target list:', remoteId);
+            console.log(`[RMC:${this.logId}] closing stale connection: ${remoteId.slice(-8)}`);
             this.mediaHandler.closePeerConnection(remoteId);
           }
         }
-        // Don't clear currentConnections — the loop below uses it to skip already-connected peers.
-        // New peers (in targetConnections but not currentConnections) will get streams forwarded
-        // in the new-connection creation block below.
       } else if (shouldForward && !connectionsChanged) {
-        console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams but connections unchanged, skipping recreation`);
-        // Still close any stale connections not in target
         for (const remoteId of currentConnections) {
           if (!targetConnections.includes(remoteId)) {
-            console.log('[RelayMeshClient] Closing stale connection no longer in target list:', remoteId);
             this.mediaHandler.closePeerConnection(remoteId);
           }
         }
-      } else {
-        console.log(`[RelayMeshClient] Relay has ${remoteStreams.size} remote streams but no peers to forward to, keeping connections`);
       }
     } else {
-      // Normal case: only close connections no longer needed
       for (const remoteId of currentConnections) {
         if (!targetConnections.includes(remoteId)) {
-          console.log('[RelayMeshClient] Closing connection to:', remoteId);
           this.mediaHandler.closePeerConnection(remoteId);
         }
       }
     }
 
-    // Establish new connections and add local stream
     const peerConfig = this.buildPeerConnectionConfig();
     for (const remoteId of targetConnections) {
       if (currentConnections.includes(remoteId)) {
-        const pc = this.mediaHandler.getPeerConnection(remoteId);
-        console.log(`[RelayMeshClient] Already connected to ${remoteId.slice(-8)}, signalingState=${pc?.signalingState} connectionState=${pc?.connectionState} senders=${pc?.getSenders().length}`);
         continue;
       }
       {
-        console.log('[RelayMeshClient] Creating peer connection to:', remoteId);
+        console.log(`[RMC:${this.logId}] creating PC to ${remoteId.slice(-8)} role=${this.currentRole}`);
         const peerConnection = await this.mediaHandler.createPeerConnection(remoteId, peerConfig);
         
-        // Add local stream to the peer connection
-        console.log('[RelayMeshClient] Adding local stream to peer connection:', remoteId);
+        // Suppress onnegotiationneeded for this peer while we're setting up tracks.
+        // We'll send the offer manually once all tracks are added.
+        this.suppressNegotiationFor.add(remoteId);
+
+        console.log(`[RMC:${this.logId}] adding local stream to new PC ${remoteId.slice(-8)} localStreamId=${localStream.id} tracks=[${localStream.getTracks().map(t => `${t.kind}:${t.id.slice(-8)}`).join(',')}]`);
         this.mediaHandler.addLocalStream(peerConnection, {
           streamId: localStream.id,
           participantId: participantId,
@@ -1293,64 +1361,154 @@ export class RelayMeshClient extends EventEmitter {
           isLocal: true,
         });
 
-        // If we're a relay node, also forward all remote streams to this peer
         if (this.currentRole === 'relay') {
           const remoteStreams = this.mediaHandler.getRemoteStreams();
           const pendingStreams = this.mediaHandler.getPendingStreams();
-          console.log(`[RelayMeshClient] Relay mode: forwarding ${remoteStreams.size} remote streams + ${pendingStreams.size} pending to ${remoteId}`);
           
-          // Build stream-ID → original-participant-ID map to send over data channel
-          const streamMap: Record<string, string> = {};
-
-          for (const [sourceParticipantId, remoteStream] of remoteStreams.entries()) {
-            // Don't forward a stream back to its source
-            if (sourceParticipantId !== remoteId) {
-              console.log(`[RelayMeshClient] Forwarding resolved stream from ${sourceParticipantId} to ${remoteId}`);
-              this.mediaHandler.addRemoteStreamForRelay(peerConnection, remoteStream, sourceParticipantId);
-              streamMap[remoteStream.id] = sourceParticipantId;
-            }
+          // Get the peer we're creating a connection to (to avoid forwarding back to source)
+          const sourcePeerForNewConnection = this.mediaHandler.getStreamSourcePeer(remoteId);
+          
+          console.log(`[RMC:${this.logId}][newConn] forwarding ${remoteStreams.size} resolved + ${pendingStreams.size} pending to NEW connection ${remoteId.slice(-8)}`);
+          if (remoteStreams.size > 0) {
+            console.log(`[RMC:${this.logId}][newConn] available resolved streams: [${Array.from(remoteStreams.keys()).map(p => p.slice(-8)).join(', ')}]`);
+          }
+          if (pendingStreams.size > 0) {
+            console.log(`[RMC:${this.logId}][newConn] available pending streams: [${Array.from(pendingStreams.keys()).map(s => s.slice(0,8)).join(', ')}]`);
           }
 
-          // Also forward pending streams (arrived but relay-stream-map not yet received).
-          // For relay-to-relay connections the stream is direct, so connectionId IS the participant ID.
+          // Collect promises so we can wait for all canvas pipelines before sending the offer.
+          // This ensures the offer includes all forwarded tracks (no renegotiation needed).
+          const trackReadyPromises: Promise<void>[] = [];
+
+          for (const [sourceParticipantId, _snapshotStream] of remoteStreams.entries()) {
+            // Skip if this is the peer we're connecting to (don't forward their own stream back)
+            if (sourceParticipantId === remoteId) {
+              console.log(`[RMC:${this.logId}][newConn] skipping resolved stream from ${sourceParticipantId.slice(-8)} - same as target peer`);
+              continue;
+            }
+            
+            // Skip if we received this stream FROM the peer we're connecting to (avoid forwarding loop)
+            const streamSourcePeer = this.mediaHandler.getStreamSourcePeer(sourceParticipantId);
+            if (streamSourcePeer === remoteId) {
+              console.log(`[RMC:${this.logId}][newConn] skipping resolved stream from ${sourceParticipantId.slice(-8)} - received from target peer ${remoteId.slice(-8)}`);
+              continue;
+            }
+            
+            console.log(`[RMC:${this.logId}][newConn] forwarding resolved stream from ${sourceParticipantId.slice(-8)} (streamId=${_snapshotStream.id.slice(0,8)}) to ${remoteId.slice(-8)}`);
+            const capturedPeerId = remoteId;
+            const capturedPc = peerConnection;
+            const capturedSourceId = sourceParticipantId;
+            const p = new Promise<void>((resolve) => {
+              // Re-read remoteStreams at call time — a previous canvas pipeline for another
+              // peer may have already updated remoteStreams[sourceId] to a synthetic stream.
+              // Using the synthetic avoids re-running the canvas pipeline on a re-relay stream
+              // (which would hit the 500ms timeout and forward dead tracks).
+              const currentStream = this.mediaHandler!.getRemoteStreams().get(capturedSourceId) ?? _snapshotStream;
+              console.log(`[RMC:${this.logId}][newConn] calling addRemoteStreamForRelay for ${capturedSourceId.slice(-8)} stream=${currentStream.id.slice(0,8)} to ${capturedPeerId.slice(-8)}`);
+              this.mediaHandler!.addRemoteStreamForRelay(capturedPc, currentStream, capturedSourceId, () => {
+                console.log(`[RMC:${this.logId}][newConn] addRemoteStreamForRelay callback for ${capturedSourceId.slice(-8)} to ${capturedPeerId.slice(-8)} - tracks added`);
+                // Just signal completion - stream map will be sent after offer/answer in handleWebRTCAnswer
+                resolve();
+              });
+            });
+            trackReadyPromises.push(p);
+          }
+
           for (const [nativeStreamId, pending] of pendingStreams.entries()) {
-            const sourceId = pending.connectionId; // best guess: the peer we received it from
-            if (sourceId !== remoteId) {
-              // Check if we already added this stream via remoteStreams
-              const alreadyAdded = Object.values(streamMap).includes(sourceId);
-              if (!alreadyAdded) {
-                console.log(`[RelayMeshClient] Forwarding pending stream from ${sourceId} (streamId=${nativeStreamId}) to ${remoteId}`);
-                this.mediaHandler.addRemoteStreamForRelay(peerConnection, pending.stream, sourceId);
-                streamMap[nativeStreamId] = sourceId;
+            const sourceId = pending.connectionId;
+            if (sourceId !== remoteId && !remoteStreams.has(sourceId)) {
+              console.log(`[RMC:${this.logId}][newConn] forwarding pending stream ${nativeStreamId.slice(0,8)} from ${sourceId.slice(-8)} to ${remoteId.slice(-8)}`);
+              const capturedPeerId = remoteId;
+              const capturedPc = peerConnection;
+              const p = new Promise<void>((resolve) => {
+                this.mediaHandler!.addRemoteStreamForRelay(capturedPc, pending.stream, sourceId, () => {
+                  console.log(`[RMC:${this.logId}][newConn] addRemoteStreamForRelay callback for pending ${sourceId.slice(-8)} to ${capturedPeerId.slice(-8)} - tracks added`);
+                  // Just signal completion - stream map will be sent after offer/answer in handleWebRTCAnswer
+                  resolve();
+                });
+              });
+              trackReadyPromises.push(p);
+            } else {
+              if (sourceId === remoteId) {
+                console.log(`[RMC:${this.logId}][newConn] skipping pending stream ${nativeStreamId.slice(0,8)} from ${sourceId.slice(-8)} - same as target peer`);
+              } else {
+                console.log(`[RMC:${this.logId}][newConn] skipping pending stream ${nativeStreamId.slice(0,8)} from ${sourceId.slice(-8)} - already in resolved streams`);
               }
             }
           }
 
-          // Send the stream map over a data channel so the receiver can attribute streams correctly
-          if (Object.keys(streamMap).length > 0) {
-            this.mediaHandler.sendRelayStreamMap(remoteId, peerConnection, streamMap);
+          // Wait for all canvas pipelines to complete before sending the offer.
+          // This ensures the offer SDP includes all forwarded tracks so no renegotiation is needed.
+          if (trackReadyPromises.length > 0) {
+            console.log(`[RMC:${this.logId}][newConn] waiting for ${trackReadyPromises.length} canvas pipeline(s) before offer to ${remoteId.slice(-8)}`);
+            await Promise.all(trackReadyPromises);
+            console.log(`[RMC:${this.logId}][newConn] all ${trackReadyPromises.length} pipeline(s) ready, proceeding with offer to ${remoteId.slice(-8)}`);
+          } else {
+            console.log(`[RMC:${this.logId}][newConn] no remote streams to forward to ${remoteId.slice(-8)} (only local stream)`);
           }
+
+          // Don't send stream map here - it will be sent after answer is received in handleWebRTCAnswer
         }
 
-        // Initiate WebRTC offer — only if we're in a state where we can create one.
-        // If the peer already sent us an offer (have-remote-offer), skip: the
-        // handleWebRTCOffer path will create the answer and complete negotiation.
+        // All tracks added — lift suppression and send the offer
+        this.suppressNegotiationFor.delete(remoteId);
+
         if (peerConnection.signalingState !== 'stable') {
-          console.log('[RelayMeshClient] Skipping offer for:', remoteId, '- signaling state:', peerConnection.signalingState);
+          console.log(`[RMC:${this.logId}] skipping offer for ${remoteId.slice(-8)}: state=${peerConnection.signalingState}`);
         } else {
-          console.log('[RelayMeshClient] Creating WebRTC offer for:', remoteId);
           this.makingOffer.set(remoteId, true);
           try {
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             this.signalingClient.sendWebRTCOffer(remoteId, offer);
-            console.log('[RelayMeshClient] Sent WebRTC offer to:', remoteId);
+            console.log(`[RMC:${this.logId}] offer sent to ${remoteId.slice(-8)}`);
           } catch (error) {
-            console.error('[RelayMeshClient] Error creating offer for:', remoteId, error);
+            console.error(`[RMC:${this.logId}] offer error for ${remoteId.slice(-8)}:`, error);
             this.makingOffer.set(remoteId, false);
           }
         }
-        // Note: makingOffer flag is cleared when we receive an answer or handle a collision
+      }
+    }
+    
+    // For existing connections where we're a relay, ensure local stream is present
+    // This handles the case where a relay has no remote streams to forward but still
+    // needs to send its own local stream to connected peers (e.g. relay with no members)
+    if (this.currentRole === 'relay') {
+      console.log(`[RMC:${this.logId}][localStreamCheck] checking ${targetConnections.length} target connections`);
+      for (const remoteId of targetConnections) {
+        if (currentConnections.includes(remoteId)) {
+          const pc = this.mediaHandler.getPeerConnection(remoteId);
+          if (pc) {
+            const senders = pc.getSenders();
+            const localTrackIds = localStream.getTracks().map(t => t.id);
+            const senderTrackIds = senders.map(s => s.track?.id || 'null');
+            console.log(`[RMC:${this.logId}][localStreamCheck] ${remoteId.slice(-8)}: localTracks=[${localTrackIds.join(',')}] senderTracks=[${senderTrackIds.join(',')}]`);
+            
+            const hasLocalTracks = senders.some(s => s.track && localStream.getTracks().some(t => t.id === s.track?.id));
+            if (!hasLocalTracks) {
+              console.log(`[RMC:${this.logId}][localStreamCheck] MISSING local stream on existing connection ${remoteId.slice(-8)} - adding now`);
+              this.mediaHandler.addLocalStream(pc, {
+                streamId: localStream.id,
+                participantId: participantId,
+                tracks: localStream.getTracks(),
+                isLocal: true,
+              });
+              // Trigger renegotiation to send the new tracks
+              if (pc.signalingState === 'stable') {
+                console.log(`[RMC:${this.logId}][localStreamCheck] triggering renegotiation for ${remoteId.slice(-8)} to send local stream`);
+                this.renegotiateConnection(remoteId, pc);
+              } else {
+                console.log(`[RMC:${this.logId}][localStreamCheck] cannot renegotiate ${remoteId.slice(-8)} - signalingState=${pc.signalingState}`);
+              }
+            } else {
+              console.log(`[RMC:${this.logId}][localStreamCheck] ${remoteId.slice(-8)} already has local tracks ✓`);
+            }
+          } else {
+            console.log(`[RMC:${this.logId}][localStreamCheck] ${remoteId.slice(-8)} - no peer connection found`);
+          }
+        } else {
+          console.log(`[RMC:${this.logId}][localStreamCheck] ${remoteId.slice(-8)} - new connection (will be created)`);
+        }
       }
     }
 
@@ -1376,15 +1534,8 @@ export class RelayMeshClient extends EventEmitter {
   }
 
   private getTargetConnections(participantId: string): string[] {
-    if (!this.currentTopology) {
-      return [];
-    }
-
+    if (!this.currentTopology) return [];
     const isRelay = this.currentTopology.relayNodes.includes(participantId);
-    
-    console.log('[RelayMeshClient] getTargetConnections for:', participantId);
-    console.log('[RelayMeshClient] Is relay:', isRelay);
-    console.log('[RelayMeshClient] Topology groups:', JSON.stringify(this.currentTopology.groups, null, 2));
 
     // Special case: P2P mode (no relay nodes)
     if (this.currentTopology.relayNodes.length === 0) {
@@ -1403,35 +1554,22 @@ export class RelayMeshClient extends EventEmitter {
     }
 
     if (isRelay) {
-      // Relay nodes connect to all other relays and their group members
       const otherRelays = this.currentTopology.relayNodes.filter((id) => id !== participantId);
       const group = this.currentTopology.groups.find((g) => g.relayNodeId === participantId);
       const groupMembers = group?.regularNodeIds || [];
-      
-      console.log('[RelayMeshClient] Relay connections - other relays:', otherRelays, 'group members:', groupMembers);
-      
       return [...otherRelays, ...groupMembers];
     } else {
-      // Regular nodes connect only to their assigned relay
       const group = this.currentTopology.groups.find((g) =>
         g.regularNodeIds.includes(participantId)
       );
-      
-      console.log('[RelayMeshClient] Regular node - assigned group:', group);
-
       if (group) {
         return [group.relayNodeId];
       }
-
-      // Fallback: not yet assigned to a group (topology race on join).
-      // Connect to the first relay so we're not isolated while waiting for
-      // the leader to broadcast an updated topology that includes us.
       if (this.currentTopology.relayNodes.length > 0) {
         const fallbackRelay = this.currentTopology.relayNodes[0];
-        console.log('[RelayMeshClient] Regular node not yet in any group, using fallback relay:', fallbackRelay);
+        console.log(`[RMC:${this.logId}] no group yet, fallback relay: ${fallbackRelay.slice(-8)}`);
         return [fallbackRelay];
       }
-
       return [];
     }
   }
@@ -1497,7 +1635,7 @@ export class RelayMeshClient extends EventEmitter {
       return;
     }
 
-    console.log('[RelayMeshClient] Received WebRTC offer from:', message.from);
+    console.log(`[RMC:${this.logId}][handleWebRTCOffer] Received offer from ${message.from.slice(-8)}`);
 
     try {
       const peerConnections = this.mediaHandler.getPeerConnections();
@@ -1508,6 +1646,8 @@ export class RelayMeshClient extends EventEmitter {
       
       // Perfect negotiation: determine politeness based on ID comparison
       const polite = myId > theirId;
+      
+      console.log(`[RMC:${this.logId}][handleWebRTCOffer] from ${message.from.slice(-8)} polite=${polite} existingPC=${!!peerConnection} signalingState=${peerConnection?.signalingState ?? 'none'}`);
       
       // Get or create peer connection
       if (!peerConnection) {
@@ -1550,7 +1690,9 @@ export class RelayMeshClient extends EventEmitter {
       }
 
       // Set remote description (the offer)
+      console.log(`[RMC:${this.logId}][handleWebRTCOffer] setting remote description from ${message.from.slice(-8)}, offer has ${message.offer.sdp.split('m=').length - 1} media sections`);
       await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+      console.log(`[RMC:${this.logId}][handleWebRTCOffer] remote description set from ${message.from.slice(-8)}, signalingState=${peerConnection.signalingState}`);
 
       // Process any queued ICE candidates now that remote description is set
       const queuedCandidates = this.pendingIceCandidates.get(message.from);
@@ -1573,7 +1715,17 @@ export class RelayMeshClient extends EventEmitter {
       // Send answer back
       this.signalingClient.sendWebRTCAnswer(message.from, answer);
 
-      console.log('[RelayMeshClient] Sent WebRTC answer to:', message.from);
+      console.log(`[RMC:${this.logId}][handleWebRTCOffer] Sent answer to ${message.from.slice(-8)}`);
+
+      // After sending the answer, send updated relay-stream-map so the peer
+      // can attribute the tracks we're sending. This mirrors the logic in handleWebRTCAnswer.
+      if (this.currentRole === 'relay' && this.mediaHandler) {
+        const streamMap = this.buildStreamMapForPeer(message.from);
+        if (Object.keys(streamMap).length > 0) {
+          console.log(`[RMC:${this.logId}][handleWebRTCOffer] sending relay-stream-map to ${message.from.slice(-8)} after answer:`, streamMap);
+          this.mediaHandler.sendRelayStreamMap(message.from, peerConnection, streamMap);
+        }
+      }
     } catch (error) {
       console.error('[RelayMeshClient] Error handling WebRTC offer:', error);
     }
@@ -1625,6 +1777,17 @@ export class RelayMeshClient extends EventEmitter {
       
       // Clear the makingOffer flag now that negotiation is complete
       this.makingOffer.set(message.from, false);
+
+      // After renegotiation completes, send updated relay-stream-map so the peer
+      // can attribute the tracks it just received via ontrack. This ensures the map
+      // arrives AFTER the tracks, not before (which would cause "no pending stream" warnings).
+      if (this.currentRole === 'relay' && this.mediaHandler) {
+        const streamMap = this.buildStreamMapForPeer(message.from);
+        if (Object.keys(streamMap).length > 0) {
+          console.log(`[RMC:${this.logId}][handleWebRTCAnswer] sending relay-stream-map to ${message.from.slice(-8)} after renegotiation:`, streamMap);
+          this.mediaHandler.sendRelayStreamMap(message.from, peerConnection, streamMap);
+        }
+      }
     } catch (error) {
       console.error('[RelayMeshClient] Error handling WebRTC answer:', error);
     }
