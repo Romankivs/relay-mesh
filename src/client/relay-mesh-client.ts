@@ -47,6 +47,9 @@ export class RelayMeshClient extends EventEmitter {
   private allMetrics: Map<string, ParticipantMetrics> = new Map();
   private currentRole: 'relay' | 'regular' = 'regular';
   private metricsUpdateInterval: NodeJS.Timeout | null = null;
+  private statsPollingInterval: NodeJS.Timeout | null = null;
+  // For bandwidth calculation from RTCStats deltas
+  private lastStatsSnapshot: { bytesSent: number; bytesReceived: number; timestamp: number } | null = null;
   private lastTopologyRelayIds: string[] = [];
   private lastTopologyMetricsSnapshot: Map<string, {
     uploadMbps: number;
@@ -305,6 +308,63 @@ export class RelayMeshClient extends EventEmitter {
       // Start metrics collection (after registration)
       await this.metricsCollector.startCollection();
 
+      // Poll RTCStats from active peer connections every 2s to feed real latency/stability data
+      this.statsPollingInterval = setInterval(async () => {
+        if (!this.metricsCollector || !this.mediaHandler) return;
+        const peerConnections = this.mediaHandler.getPeerConnections();
+        if (peerConnections.size === 0) return;
+
+        let totalBytesSent = 0;
+        let totalBytesReceived = 0;
+
+        for (const [peerId, pc] of peerConnections) {
+          if (pc.connectionState !== 'connected') continue;
+          try {
+            const stats = await pc.getStats();
+            // Feed stability metrics (packet loss, jitter)
+            this.metricsCollector.updateStability(stats);
+            // Feed latency and accumulate bytes for bandwidth
+            stats.forEach((report: any) => {
+              if (report.type === 'remote-inbound-rtp' && typeof report.roundTripTime === 'number') {
+                this.metricsCollector!.updateLatency(peerId, report.roundTripTime * 1000);
+              }
+              if (report.type === 'candidate-pair' && report.state === 'succeeded' &&
+                  typeof report.currentRoundTripTime === 'number') {
+                this.metricsCollector!.updateLatency(peerId, report.currentRoundTripTime * 1000);
+              }
+              if (report.type === 'outbound-rtp' && typeof report.bytesSent === 'number') {
+                totalBytesSent += report.bytesSent;
+              }
+              if (report.type === 'inbound-rtp' && typeof report.bytesReceived === 'number') {
+                totalBytesReceived += report.bytesReceived;
+              }
+            });
+          } catch {
+            // ignore stats errors for individual connections
+          }
+        }
+
+        // Derive bandwidth from byte deltas between polls
+        const now = Date.now();
+        if (this.lastStatsSnapshot && totalBytesSent + totalBytesReceived > 0) {
+          const dtSec = (now - this.lastStatsSnapshot.timestamp) / 1000;
+          if (dtSec > 0) {
+            const uploadMbps = ((totalBytesSent - this.lastStatsSnapshot.bytesSent) * 8) / (dtSec * 1_000_000);
+            const downloadMbps = ((totalBytesReceived - this.lastStatsSnapshot.bytesReceived) * 8) / (dtSec * 1_000_000);
+            this.metricsCollector.updateBandwidth(
+              Math.max(0, uploadMbps),
+              Math.max(0, downloadMbps),
+            );
+          }
+        }
+        if (totalBytesSent + totalBytesReceived > 0) {
+          this.lastStatsSnapshot = { bytesSent: totalBytesSent, bytesReceived: totalBytesReceived, timestamp: now };
+        }
+
+        // Snapshot updated values into currentMetrics and broadcast immediately
+        await this.metricsCollector.snapshotFromRTCStats();
+      }, 2000);
+
       // Wait for topology assignment and state transition to CONNECTED
       await this.waitForState(ConferenceState.CONNECTED, 10000);
 
@@ -372,6 +432,11 @@ export class RelayMeshClient extends EventEmitter {
       // Stop metrics collection
       if (this.metricsCollector) {
         this.metricsCollector.stopCollection();
+      }
+
+      if (this.statsPollingInterval) {
+        clearInterval(this.statsPollingInterval);
+        this.statsPollingInterval = null;
       }
 
       if (this.metricsUpdateInterval) {

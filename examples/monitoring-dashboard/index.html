@@ -228,6 +228,11 @@
         .metrics-table {
             width: 100%;
             border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .section {
+            overflow-x: auto;
         }
 
         .metrics-table th {
@@ -497,15 +502,21 @@
                     <tr>
                         <th>Participant</th>
                         <th>Role</th>
-                        <th>Bandwidth</th>
-                        <th>Latency</th>
+                        <th>Upload</th>
+                        <th>Download</th>
+                        <th>Latency (avg/min/max)</th>
                         <th>Packet Loss</th>
+                        <th>Jitter</th>
+                        <th>Uptime</th>
+                        <th>CPU</th>
+                        <th>Memory</th>
+                        <th>NAT</th>
                         <th>Connection</th>
                     </tr>
                 </thead>
                 <tbody id="participantMetrics">
                     <tr>
-                        <td colspan="6" class="empty-state">No participants</td>
+                        <td colspan="12" class="empty-state">No participants</td>
                     </tr>
                 </tbody>
             </table>
@@ -562,14 +573,46 @@
                 }
             ],
             participants: [
-                { id: 'user-1', name: 'Alice', role: 'relay', bandwidth: 15.2, latency: 45, packetLoss: 0.1, quality: 'good' },
-                { id: 'user-2', name: 'Bob', role: 'relay', bandwidth: 12.8, latency: 52, packetLoss: 0.3, quality: 'good' },
-                { id: 'user-3', name: 'Charlie', role: 'regular', bandwidth: 8.5, latency: 38, packetLoss: 0.2, quality: 'good' },
-                { id: 'user-4', name: 'Diana', role: 'regular', bandwidth: 6.2, latency: 67, packetLoss: 1.2, quality: 'warning' },
-                { id: 'user-5', name: 'Eve', role: 'regular', bandwidth: 10.1, latency: 41, packetLoss: 0.1, quality: 'good' },
-                { id: 'user-6', name: 'Frank', role: 'regular', bandwidth: 7.8, latency: 55, packetLoss: 0.5, quality: 'good' },
-                { id: 'user-7', name: 'Grace', role: 'relay', bandwidth: 18.5, latency: 32, packetLoss: 0.1, quality: 'good' },
-                { id: 'user-8', name: 'Henry', role: 'regular', bandwidth: 5.5, latency: 78, packetLoss: 2.1, quality: 'warning' }
+                { id: 'user-1', name: 'Alice', role: 'relay', natType: 1, quality: 'good',
+                  bandwidth: { uploadMbps: 15.2, downloadMbps: 28.4, confidence: 0.9 },
+                  latency: { averageRttMs: 45, minRttMs: 38, maxRttMs: 62 },
+                  stability: { packetLossPercent: 0.1, jitterMs: 3.2, connectionUptime: 1820, reconnectionCount: 0 },
+                  device: { cpuUsagePercent: 22, availableMemoryMB: 3400, hardwareAcceleration: true, supportedCodecs: ['VP8','H264'] } },
+                { id: 'user-2', name: 'Bob', role: 'relay', natType: 1, quality: 'good',
+                  bandwidth: { uploadMbps: 12.8, downloadMbps: 22.1, confidence: 0.85 },
+                  latency: { averageRttMs: 52, minRttMs: 44, maxRttMs: 71 },
+                  stability: { packetLossPercent: 0.3, jitterMs: 4.8, connectionUptime: 1750, reconnectionCount: 0 },
+                  device: { cpuUsagePercent: 35, availableMemoryMB: 2100, hardwareAcceleration: true, supportedCodecs: ['VP8','VP9','H264'] } },
+                { id: 'user-3', name: 'Charlie', role: 'regular', natType: 2, quality: 'good',
+                  bandwidth: { uploadMbps: 8.5, downloadMbps: 15.0, confidence: 0.8 },
+                  latency: { averageRttMs: 38, minRttMs: 30, maxRttMs: 55 },
+                  stability: { packetLossPercent: 0.2, jitterMs: 2.1, connectionUptime: 1600, reconnectionCount: 0 },
+                  device: { cpuUsagePercent: 18, availableMemoryMB: 4096, hardwareAcceleration: true, supportedCodecs: ['VP8','H264'] } },
+                { id: 'user-4', name: 'Diana', role: 'regular', natType: 3, quality: 'warning',
+                  bandwidth: { uploadMbps: 6.2, downloadMbps: 10.5, confidence: 0.75 },
+                  latency: { averageRttMs: 67, minRttMs: 55, maxRttMs: 110 },
+                  stability: { packetLossPercent: 1.2, jitterMs: 12.4, connectionUptime: 900, reconnectionCount: 1 },
+                  device: { cpuUsagePercent: 61, availableMemoryMB: 1024, hardwareAcceleration: false, supportedCodecs: ['VP8'] } },
+                { id: 'user-5', name: 'Eve', role: 'regular', natType: 1, quality: 'good',
+                  bandwidth: { uploadMbps: 10.1, downloadMbps: 18.3, confidence: 0.88 },
+                  latency: { averageRttMs: 41, minRttMs: 35, maxRttMs: 58 },
+                  stability: { packetLossPercent: 0.1, jitterMs: 2.8, connectionUptime: 1400, reconnectionCount: 0 },
+                  device: { cpuUsagePercent: 29, availableMemoryMB: 2800, hardwareAcceleration: true, supportedCodecs: ['VP8','VP9'] } },
+                { id: 'user-6', name: 'Frank', role: 'regular', natType: 2, quality: 'good',
+                  bandwidth: { uploadMbps: 7.8, downloadMbps: 13.2, confidence: 0.82 },
+                  latency: { averageRttMs: 55, minRttMs: 48, maxRttMs: 78 },
+                  stability: { packetLossPercent: 0.5, jitterMs: 6.1, connectionUptime: 1200, reconnectionCount: 0 },
+                  device: { cpuUsagePercent: 44, availableMemoryMB: 1800, hardwareAcceleration: false, supportedCodecs: ['VP8','H264'] } },
+                { id: 'user-7', name: 'Grace', role: 'relay', natType: 0, quality: 'good',
+                  bandwidth: { uploadMbps: 18.5, downloadMbps: 35.0, confidence: 0.95 },
+                  latency: { averageRttMs: 32, minRttMs: 28, maxRttMs: 44 },
+                  stability: { packetLossPercent: 0.1, jitterMs: 1.9, connectionUptime: 2100, reconnectionCount: 0 },
+                  device: { cpuUsagePercent: 15, availableMemoryMB: 6144, hardwareAcceleration: true, supportedCodecs: ['VP8','VP9','H264','AV1'] } },
+                { id: 'user-8', name: 'Henry', role: 'regular', natType: 4, quality: 'warning',
+                  bandwidth: { uploadMbps: 5.5, downloadMbps: 9.0, confidence: 0.7 },
+                  latency: { averageRttMs: 78, minRttMs: 60, maxRttMs: 140 },
+                  stability: { packetLossPercent: 2.1, jitterMs: 18.7, connectionUptime: 450, reconnectionCount: 2 },
+                  device: { cpuUsagePercent: 72, availableMemoryMB: 512, hardwareAcceleration: false, supportedCodecs: ['VP8'] } }
             ],
             relaySelection: {
                 totalParticipants: 8,
@@ -895,29 +938,59 @@
 
         function renderParticipantMetrics(data) {
             const tbody = document.getElementById('participantMetrics');
-            
+
+            if (!data.participants || data.participants.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="12" class="empty-state">No participants</td></tr>';
+                return;
+            }
+
             // Build a set of relay node IDs from topology
             const relayNodeIds = new Set();
             data.conferences.forEach(conf => {
-                conf.topology.groups.forEach(group => {
-                    relayNodeIds.add(group.relayNodeId);
-                });
+                (conf.topology.relayNodes || []).forEach(id => relayNodeIds.add(id));
+                conf.topology.groups.forEach(group => relayNodeIds.add(group.relayNodeId));
             });
-            
+
+            const NAT_LABELS = ['Open', 'Full Cone', 'Restricted', 'Port Restricted', 'Symmetric'];
+
+            const v = (val, unit = '', decimals = 1) =>
+                val != null ? `${Number(val).toFixed(decimals)}${unit}` : '—';
+
+            const uptimeFmt = s => {
+                if (s == null) return '—';
+                s = Math.round(s);
+                if (s < 60) return `${s}s`;
+                if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`;
+                return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+            };
+
             tbody.innerHTML = data.participants.map(p => {
-                // Determine display role based on topology
-                const displayRole = relayNodeIds.has(p.id) ? 'relay' : p.role;
-                
+                const displayRole = relayNodeIds.has(p.id) ? 'relay' : (p.role || 'regular');
+                const quality = p.quality || 'unknown';
+                const bw = p.bandwidth;
+                const lat = p.latency;
+                const stab = p.stability;
+                const dev = p.device;
+                const latStr = lat
+                    ? `${Math.round(lat.averageRttMs)}/${Math.round(lat.minRttMs)}/${Math.round(lat.maxRttMs)} ms`
+                    : '—';
+                const natLabel = p.natType != null ? (NAT_LABELS[p.natType] || `Type ${p.natType}`) : '—';
                 return `
                 <tr>
-                    <td>${p.name}</td>
+                    <td>${p.name || p.id}</td>
                     <td><span class="badge ${displayRole}">${displayRole.toUpperCase()}</span></td>
-                    <td>${p.bandwidth.toFixed(1)} Mbps</td>
-                    <td>${p.latency} ms</td>
-                    <td>${p.packetLoss.toFixed(1)}%</td>
-                    <td><span class="badge ${p.quality}">${p.quality.toUpperCase()}</span></td>
-                </tr>
-            `}).join('');
+                    <td>${bw ? v(bw.uploadMbps, ' Mbps') : '—'}</td>
+                    <td>${bw ? v(bw.downloadMbps, ' Mbps') : '—'}</td>
+                    <td>${latStr}</td>
+                    <td>${stab ? v(stab.packetLossPercent, '%') : '—'}</td>
+                    <td>${stab ? v(stab.jitterMs, ' ms') : '—'}</td>
+                    <td>${stab ? uptimeFmt(stab.connectionUptime) : '—'}</td>
+                    <td>${dev ? v(dev.cpuUsagePercent, '%', 0) : '—'}</td>
+                    <td>${dev ? v(dev.availableMemoryMB, ' MB', 0) : '—'}</td>
+                    <td>${natLabel}</td>
+                    <td><span class="badge ${quality}">${quality.toUpperCase()}</span></td>
+                </tr>`;
+            }).join('');
         }
 
         function renderRelaySelection(data) {

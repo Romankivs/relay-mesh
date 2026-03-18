@@ -508,10 +508,14 @@ export class SignalingServer {
     
     // Store the metrics for monitoring API
     participant.metrics = message.metrics;
-    
-    // Broadcast to all other participants in the conference
+
+    // Also update the conference participant record so monitoring API sees real metrics
     const conference = this.conferences.get(participant.conferenceId);
     if (conference) {
+      const confParticipant = conference.participants.get(senderId);
+      if (confParticipant) {
+        confParticipant.metrics = message.metrics;
+      }
       const participantCount = conference.participants.size;
       console.log('[SignalingServer] Broadcasting to', participantCount - 1, 'other participants');
     }
@@ -818,24 +822,56 @@ export class SignalingServer {
       });
 
       for (const [participantId, participant] of conference.participants.entries()) {
-        // Check if metrics exist before accessing
-        if (!participant.metrics) {
-          continue;
-        }
-
         const metrics = participant.metrics;
         
         // Determine role from topology structure
         const role = relayNodeIds.has(participantId) ? 'relay' : 'regular';
 
+        // Only expose metrics that have been actually measured (confidence >= 0.5)
+        // Default/placeholder metrics have measurementConfidence: 0.1
+        const hasRealMetrics = metrics && (metrics.bandwidth?.measurementConfidence ?? 0) >= 0.5;
+
         participants.push({
           id: participantId,
           name: participant.name,
-          role: role, // Use topology-derived role
-          bandwidth: metrics.bandwidth?.uploadMbps || 0,
-          latency: metrics.latency?.averageRttMs || 0,
-          packetLoss: metrics.stability?.packetLossPercent || 0,
-          quality: this.calculateQuality(metrics),
+          role,
+          // Only expose metrics that have been actually measured (confidence >= 0.5)
+          // Default/placeholder metrics have measurementConfidence: 0.1
+          ...(hasRealMetrics ? {
+            bandwidth: {
+              uploadMbps: metrics!.bandwidth.uploadMbps,
+              downloadMbps: metrics!.bandwidth.downloadMbps,
+              confidence: metrics!.bandwidth.measurementConfidence,
+            },
+            latency: {
+              averageRttMs: metrics!.latency.averageRttMs,
+              minRttMs: metrics!.latency.minRttMs,
+              maxRttMs: metrics!.latency.maxRttMs,
+            },
+            stability: {
+              packetLossPercent: metrics!.stability.packetLossPercent,
+              jitterMs: metrics!.stability.jitterMs,
+              connectionUptime: metrics!.stability.connectionUptime,
+              reconnectionCount: metrics!.stability.reconnectionCount,
+            },
+            device: {
+              cpuUsagePercent: metrics!.device.cpuUsagePercent,
+              availableMemoryMB: metrics!.device.availableMemoryMB,
+              hardwareAcceleration: metrics!.device.hardwareAcceleration,
+              supportedCodecs: metrics!.device.supportedCodecs,
+            },
+            natType: metrics!.natType,
+            quality: this.calculateQuality(metrics!),
+            metricsTimestamp: metrics!.timestamp,
+          } : {
+            bandwidth: null,
+            latency: null,
+            stability: null,
+            device: null,
+            natType: null,
+            quality: 'unknown',
+            metricsTimestamp: null,
+          }),
         });
       }
     }

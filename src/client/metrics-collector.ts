@@ -38,6 +38,11 @@ export class MetricsCollector {
   private packetLossPercent: number = 0;
   private jitterMs: number = 0;
 
+  // RTC-derived bandwidth (from outbound/inbound-rtp byte deltas)
+  private rtcUploadMbps: number = 0;
+  private rtcDownloadMbps: number = 0;
+  private hasRTCBandwidth: boolean = false;
+
   constructor(config: MetricsCollectorConfig) {
     this.participantId = config.participantId;
     this.stunServers = config.stunServers || [
@@ -551,6 +556,50 @@ export class MetricsCollector {
 
     // Default to true for modern browsers
     return true;
+  }
+
+  /**
+   * Update bandwidth from real RTCStats byte deltas (called by relay-mesh-client stats poller)
+   */
+  updateBandwidth(uploadMbps: number, downloadMbps: number): void {
+    this.rtcUploadMbps = uploadMbps;
+    this.rtcDownloadMbps = downloadMbps;
+    this.hasRTCBandwidth = true;
+  }
+
+  /**
+   * Snapshot current latency/stability/bandwidth into currentMetrics and notify subscribers.
+   * Called after each RTCStats poll so the dashboard sees fresh values without waiting
+   * for the full 30s collectMetrics cycle.
+   */
+  async snapshotFromRTCStats(): Promise<void> {
+    if (!this.currentMetrics) return;
+
+    const connectionUptime = (Date.now() - this.connectionStartTime) / 1000;
+
+    const bandwidth: BandwidthMetrics = this.hasRTCBandwidth
+      ? { uploadMbps: this.rtcUploadMbps, downloadMbps: this.rtcDownloadMbps, measurementConfidence: 0.8 }
+      : this.currentMetrics.bandwidth;
+
+    this.currentMetrics = {
+      ...this.currentMetrics,
+      timestamp: Date.now(),
+      bandwidth,
+      latency: {
+        averageRttMs: this.calculateAverageLatency(),
+        minRttMs: this.calculateMinLatency(),
+        maxRttMs: this.calculateMaxLatency(),
+        measurements: new Map(this.latencyMeasurements),
+      },
+      stability: {
+        packetLossPercent: this.packetLossPercent,
+        jitterMs: this.jitterMs,
+        connectionUptime,
+        reconnectionCount: this.reconnectionCount,
+      },
+    };
+
+    this.notifySubscribers();
   }
 
   /**
