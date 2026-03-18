@@ -59,7 +59,7 @@ export class RelayMeshClient extends EventEmitter {
     cpuUsage: number;
   }> = new Map();
   private makingOffer: Map<string, boolean> = new Map(); // Track ongoing offer creation per peer
-  private forwardedStreamIds: Set<string> = new Set(); // Track streams we're already forwarding
+  private forwardedStreamIds: Map<string, string> = new Map(); // participantId → sourcePeer: track which source peer we last forwarded from per participant
   private isRecreatingConnections: boolean = false; // Prevent infinite loop when recreating connections
   private pendingIceCandidates: Map<string, RTCIceCandidateInit[]> = new Map(); // Queue ICE candidates until remote description is set
   private streamMapRefreshInterval: NodeJS.Timeout | null = null; // Periodic stream map refresh for relay nodes
@@ -167,7 +167,9 @@ export class RelayMeshClient extends EventEmitter {
           // Only trigger reconnection if this is a NEW participant stream we haven't forwarded
           if (!this.forwardedStreamIds.has(stream.participantId)) {
             console.log(`[RMC:${this.logId}][onRemoteStream] NEW stream from ${stream.participantId.slice(-8)}, forwarding`);
-            this.forwardedStreamIds.add(stream.participantId);
+            // Store current sourcePeer (may be '' if relay-stream-map not yet received; streamResolved will update)
+            const currentSourcePeer = this.mediaHandler.getStreamSourcePeer(stream.participantId) ?? '';
+            this.forwardedStreamIds.set(stream.participantId, currentSourcePeer);
             
             const connectedPeers = this.mediaHandler.getConnectedPeers();
             const myGroup = this.currentTopology.groups.find(g => g.relayNodeId === participantId);
@@ -237,13 +239,14 @@ export class RelayMeshClient extends EventEmitter {
         const connectedPeers = this.mediaHandler.getConnectedPeers();
         console.log(`[RMC:${this.logId}][streamResolved] ${resolvedParticipantId.slice(-8)} resolved streamId=${resolvedStream.id.slice(0,8)}, forwarding+mapping to ${connectedPeers.length} peers: [${connectedPeers.map(p => p.slice(-8)).join(', ')}]`);
 
-        // Check if we've already forwarded this participant's stream
-        // Key by participantId only — stream ID changes on every renegotiation
-        const alreadyForwarded = this.forwardedStreamIds.has(resolvedParticipantId);
-        console.log(`[RMC:${this.logId}][streamResolved] alreadyForwarded=${alreadyForwarded} forwardedStreamIds=[${Array.from(this.forwardedStreamIds).map(id => id.slice(-8)).join(', ')}]`);
-
+        // Check if we've already forwarded this participant's stream from the same source peer.
+        // If the source peer changed (participant reconnected via different relay), re-forward.
         // Get the peer we received this stream from (to avoid forwarding back to source)
         const sourcePeer = this.mediaHandler.getStreamSourcePeer(resolvedParticipantId);
+        const lastForwardedSourcePeer = this.forwardedStreamIds.get(resolvedParticipantId);
+        const alreadyForwarded = lastForwardedSourcePeer !== undefined && lastForwardedSourcePeer === sourcePeer;
+        console.log(`[RMC:${this.logId}][streamResolved] alreadyForwarded=${alreadyForwarded} lastSourcePeer=${lastForwardedSourcePeer?.slice(-8) ?? 'none'} currentSourcePeer=${sourcePeer?.slice(-8) ?? 'unknown'}`);
+
         console.log(`[RMC:${this.logId}][streamResolved] sourcePeer for ${resolvedParticipantId.slice(-8)} is ${sourcePeer?.slice(-8) ?? 'unknown'}`);
 
         for (const peerId of connectedPeers) {
@@ -280,10 +283,10 @@ export class RelayMeshClient extends EventEmitter {
           }
         }
 
-        // Mark as forwarded (by participantId) so the onRemoteStream handler doesn't double-forward
+        // Mark as forwarded (participantId → sourcePeer) so we can detect source peer changes
         if (!alreadyForwarded) {
-          this.forwardedStreamIds.add(resolvedParticipantId);
-          console.log(`[RMC:${this.logId}][streamResolved] marked ${resolvedParticipantId.slice(-8)} as forwarded`);
+          this.forwardedStreamIds.set(resolvedParticipantId, sourcePeer ?? '');
+          console.log(`[RMC:${this.logId}][streamResolved] marked ${resolvedParticipantId.slice(-8)} as forwarded from sourcePeer=${sourcePeer?.slice(-8) ?? 'unknown'}`);
         }
       });
 
@@ -631,11 +634,17 @@ export class RelayMeshClient extends EventEmitter {
             const connectedPeers = this.mediaHandler.getConnectedPeers();
             for (const peerId of connectedPeers) {
               if (peerId === sourceParticipantId) continue;
+              // Don't forward back to the peer we received this stream from
+              const sourcePeer = this.mediaHandler.getStreamSourcePeer(sourceParticipantId);
+              if (sourcePeer && peerId === sourcePeer) {
+                console.log(`[RMC:${this.logId}] [topology-change-fwd] skipping ${sourceParticipantId.slice(-8)} → ${peerId.slice(-8)} (received from this peer)`);
+                continue;
+              }
               const pc = this.mediaHandler.getPeerConnection(peerId);
               if (!pc) continue;
               console.log(`[RMC:${this.logId}] [topology-change-fwd] forwarding ${sourceParticipantId.slice(-8)} → ${peerId.slice(-8)}`);
               this.mediaHandler.addRemoteStreamForRelay(pc, remoteStream, sourceParticipantId);
-              this.forwardedStreamIds.add(sourceParticipantId);
+              this.forwardedStreamIds.set(sourceParticipantId, this.mediaHandler.getStreamSourcePeer(sourceParticipantId) ?? '');
             }
             // Stream maps will be sent after renegotiation completes in handleWebRTCAnswer
           }
@@ -654,13 +663,17 @@ export class RelayMeshClient extends EventEmitter {
       
       this.emit('roleChange', newRole);
       
-      // Re-emit all currently known remote streams so the UI can rebuild its video elements.
+      // Re-emit remote streams so the UI can rebuild its video elements after role change.
+      // IMPORTANT: Do NOT snapshot streams here. updateConnections() (called below) will close
+      // the old relay connection and remove streams received through it. Re-reading remoteStreams
+      // after a delay ensures we only re-emit streams with live tracks.
+      // Use a delay longer than updateConnections() teardown (~0ms) but short enough to feel instant.
       if (this.mediaHandler) {
-        const remoteStreams = this.mediaHandler.getRemoteStreams();
-        console.log(`[RelayMeshClient] Re-emitting ${remoteStreams.size} remote streams after role change`);
-        const streamsToReemit = Array.from(remoteStreams.entries());
         setTimeout(() => {
-          for (const [sourceParticipantId, remoteStream] of streamsToReemit) {
+          if (!this.mediaHandler) return;
+          const liveStreams = Array.from(this.mediaHandler.getRemoteStreams().entries());
+          console.log(`[RelayMeshClient] Re-emitting ${liveStreams.length} live remote streams after role change`);
+          for (const [sourceParticipantId, remoteStream] of liveStreams) {
             const mediaStream: import('./media-handler').MediaStream = {
               streamId: remoteStream.id,
               participantId: sourceParticipantId,
@@ -669,7 +682,7 @@ export class RelayMeshClient extends EventEmitter {
             };
             this.emit('remoteStream', mediaStream);
           }
-        }, 0);
+        }, 100); // 100ms: after updateConnections() closes stale connections and removes dead streams
       }
       
       // Handle relay engine
@@ -695,21 +708,32 @@ export class RelayMeshClient extends EventEmitter {
       // Use setTimeout so updateConnections() runs first and establishes any NEW
       // connections (e.g. to the other relay) before we push streams to existing ones.
       if (oldRole === 'regular' && newRole === 'relay' && this.mediaHandler) {
-        const streamsToForward = Array.from(this.mediaHandler.getRemoteStreams().entries());
-        console.log(`[RMC:${this.logId}] regular→relay: will forward ${streamsToForward.length} streams to existing peers after updateConnections`);
+        // NOTE: Do NOT snapshot streams here. updateConnections() (called below) will close
+        // the old relay connection, which removes all streams received through it from
+        // remoteStreams. A stale snapshot would contain dead tracks from the closed connection.
+        // Instead, re-read remoteStreams at setTimeout time so we only forward live streams.
+        console.log(`[RMC:${this.logId}] regular→relay: will forward live streams to existing peers after updateConnections`);
         setTimeout(() => {
           if (!this.mediaHandler || this.currentRole !== 'relay') return;
+          // Re-read at execution time — only streams still present are live (not from closed connections)
+          const liveStreams = Array.from(this.mediaHandler.getRemoteStreams().entries());
           const connectedPeers = this.mediaHandler.getConnectedPeers();
-          console.log(`[RMC:${this.logId}] regular→relay fwd: peers=[${connectedPeers.map(p=>p.slice(-8)).join(',')}] streams=[${streamsToForward.map(([id])=>id.slice(-8)).join(',')}]`);
-          for (const [sourceParticipantId, remoteStream] of streamsToForward) {
+          console.log(`[RMC:${this.logId}] regular→relay fwd: peers=[${connectedPeers.map(p=>p.slice(-8)).join(',')}] streams=[${liveStreams.map(([id])=>id.slice(-8)).join(',')}]`);
+          for (const [sourceParticipantId, remoteStream] of liveStreams) {
             for (const peerId of connectedPeers) {
               if (peerId === sourceParticipantId) continue;
+              // Don't forward back to the peer we received this stream from
+              const sourcePeer = this.mediaHandler.getStreamSourcePeer(sourceParticipantId);
+              if (sourcePeer && peerId === sourcePeer) {
+                console.log(`[RMC:${this.logId}] regular→relay fwd: skipping ${sourceParticipantId.slice(-8)} → ${peerId.slice(-8)} (received from this peer)`);
+                continue;
+              }
               const pc = this.mediaHandler.getPeerConnection(peerId);
               if (!pc) continue;
               console.log(`[RMC:${this.logId}] regular→relay fwd: ${sourceParticipantId.slice(-8)} → ${peerId.slice(-8)}`);
               // Don't send stream map in callback - it will be sent after renegotiation completes in handleWebRTCAnswer
               this.mediaHandler.addRemoteStreamForRelay(pc, remoteStream, sourceParticipantId);
-              this.forwardedStreamIds.add(sourceParticipantId);
+              this.forwardedStreamIds.set(sourceParticipantId, this.mediaHandler.getStreamSourcePeer(sourceParticipantId) ?? '');
             }
           }
           // Stream maps will be sent after renegotiation completes in handleWebRTCAnswer
@@ -760,11 +784,7 @@ export class RelayMeshClient extends EventEmitter {
     this.allMetrics.delete(participantId);
     if (this.mediaHandler) {
       this.mediaHandler.removeRemoteStream(participantId);
-      for (const key of this.forwardedStreamIds) {
-        if (key === participantId || key.startsWith(participantId + '-')) {
-          this.forwardedStreamIds.delete(key);
-        }
-      }
+      this.forwardedStreamIds.delete(participantId);
     }
     this.lastSentStreamMaps.delete(participantId);
     this.emit('participantLeft', participantId);
@@ -1177,7 +1197,7 @@ export class RelayMeshClient extends EventEmitter {
 
         const remoteStreams = this.mediaHandler.getRemoteStreams();
         console.log(`${tag} remoteStreams keys=[${Array.from(remoteStreams.keys()).map(k => k.slice(-8)).join(', ')}]`);
-        console.log(`${tag} forwardedStreamIds=[${Array.from(this.forwardedStreamIds).map(k => k.slice(-8)).join(', ')}]`);
+        console.log(`${tag} forwardedStreamIds=[${Array.from(this.forwardedStreamIds.entries()).map(([k, v]) => `${k.slice(-8)}:${v.slice(0,8)}`).join(', ')}]`);
         const sourceStream = remoteStreams.get(stream.participantId);
 
         if (!sourceStream) {
@@ -1691,7 +1711,21 @@ export class RelayMeshClient extends EventEmitter {
 
       // Set remote description (the offer)
       console.log(`[RMC:${this.logId}][handleWebRTCOffer] setting remote description from ${message.from.slice(-8)}, offer has ${message.offer.sdp.split('m=').length - 1} media sections`);
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+      try {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+      } catch (sdpError: any) {
+        // m-line count/order mismatch: the remote peer's offer has a different number of
+        // media sections than our local description (e.g. we added forwarded tracks they
+        // don't know about yet). Close and let them retry — they'll create a fresh PC.
+        const msg = sdpError?.message ?? String(sdpError);
+        if (msg.includes('m-line') || msg.includes('media section') || msg.includes('BUNDLE')) {
+          console.warn(`[RMC:${this.logId}][handleWebRTCOffer] m-line mismatch from ${message.from.slice(-8)}, closing PC to force fresh negotiation: ${msg}`);
+          this.mediaHandler.closePeerConnection(message.from);
+        } else {
+          console.error(`[RMC:${this.logId}][handleWebRTCOffer] setRemoteDescription failed from ${message.from.slice(-8)}:`, sdpError);
+        }
+        return;
+      }
       console.log(`[RMC:${this.logId}][handleWebRTCOffer] remote description set from ${message.from.slice(-8)}, signalingState=${peerConnection.signalingState}`);
 
       // Process any queued ICE candidates now that remote description is set

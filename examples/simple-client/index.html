@@ -305,9 +305,9 @@
 
     <script type="module">
         // Using the ES module browser bundle (with cache buster)
-        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=75';
+        import { RelayMeshClient } from '../../dist/browser/relay-mesh.esm.js?v=77';
 
-        console.log('[Simple Client] Version 1.4.3 - added detailed relay forwarding diagnostics');
+        console.log('[Simple Client] Version 1.4.6 - fix stream reset re-emit: compare by ID not object reference');
         console.log('[Simple Client] Checking for getLocalStream method...');
         
         // Generate random username on page load
@@ -745,8 +745,39 @@
                 client.on('remoteStream', (stream) => {
                     // Check if we've already processed this stream
                     const streamKey = `${stream.participantId}-${stream.streamId}`;
-                    if (processedStreams.has(streamKey)) {
+                    
+                    // If the participant already has a video element, always allow srcObject updates
+                    // even if we've seen this streamKey before. This handles stream resets after
+                    // a relay peer leaves (synthetic stream → original stream).
+                    const hasExistingElement = remoteVideoElements.has(stream.participantId);
+                    
+                    if (processedStreams.has(streamKey) && !hasExistingElement) {
                         console.log('[Remote Stream] Already processed stream:', streamKey);
+                        return;
+                    }
+                    if (processedStreams.has(streamKey) && hasExistingElement) {
+                        // Already processed but participant has a video element — check if srcObject needs updating.
+                        // Compare by stream ID, not object reference: nativeStream may be a new wrapper each time.
+                        const existing = remoteVideoElements.get(stream.participantId);
+                        const currentId = existing && existing.video.srcObject && existing.video.srcObject.id;
+                        if (existing && currentId !== stream.streamId) {
+                            const browserStream = stream.nativeStream || new MediaStream(stream.tracks);
+                            console.log('[Remote Stream] Re-emitted stream for existing element (stream reset):', stream.participantId, 'old:', currentId && currentId.slice(0,8), 'new:', stream.streamId.slice(0,8));
+                            existing.video.srcObject = browserStream;
+                            const attemptPlay = () => {
+                                existing.video.play().catch(err => {
+                                    if (err.name !== 'AbortError') console.error('[Remote Stream] Error replaying video after reset:', stream.participantId, err);
+                                });
+                            };
+                            attemptPlay();
+                            const newVideoTracks = browserStream.getVideoTracks();
+                            newVideoTracks.forEach(track => {
+                                if (track.muted) {
+                                    track.onunmute = () => attemptPlay();
+                                    setTimeout(() => { if (!track.muted) attemptPlay(); }, 500);
+                                }
+                            });
+                        }
                         return;
                     }
                     
@@ -775,9 +806,46 @@
                     console.log('[Remote Stream] Using', stream.nativeStream ? 'nativeStream' : 'new MediaStream(tracks)', 'for', stream.participantId);
                     
                     // Add video element ONLY if stream has video tracks
-                    if (videoTracks.length > 0 && !remoteVideoElements.has(stream.participantId)) {
-                        addVideoElement(browserStream, stream.participantId, getParticipantDisplayName(stream.participantId), false);
-                        log(`Added video element for ${getParticipantDisplayName(stream.participantId)}`, 'info');
+                    if (videoTracks.length > 0) {
+                        if (!remoteVideoElements.has(stream.participantId)) {
+                            addVideoElement(browserStream, stream.participantId, getParticipantDisplayName(stream.participantId), false);
+                            log(`Added video element for ${getParticipantDisplayName(stream.participantId)}`, 'info');
+                        } else {
+                            // Participant already has a video element — update srcObject with the new live stream.
+                            // This happens when a relay reconnects after another relay leaves: the old stream's
+                            // tracks go dead (black video) and a new stream arrives for the same participant.
+                            // Also happens when a relay's canvas pipeline replaces its raw stream with a synthetic one.
+                            const existing = remoteVideoElements.get(stream.participantId);
+                            if (existing && existing.video.srcObject !== browserStream) {
+                                console.log('[Remote Stream] Updating srcObject for existing video element:', stream.participantId);
+                                existing.video.srcObject = browserStream;
+                                const attemptPlay = () => {
+                                    existing.video.play().catch(err => {
+                                        if (err.name !== 'AbortError') console.error('[Remote Stream] Error replaying video for:', stream.participantId, err);
+                                    });
+                                };
+                                attemptPlay();
+                                // If the new stream's video track is initially muted (canvas pipeline not yet
+                                // producing frames), set up onunmute to retry play when data starts flowing.
+                                const newVideoTracks = browserStream.getVideoTracks();
+                                newVideoTracks.forEach(track => {
+                                    if (track.muted) {
+                                        console.log('[Remote Stream] New video track is muted for:', stream.participantId, '- will retry play on unmute');
+                                        track.onunmute = () => {
+                                            console.log('[Remote Stream] Video track unmuted for:', stream.participantId, '- retrying play');
+                                            attemptPlay();
+                                        };
+                                        // Also poll in case we missed the unmute event
+                                        setTimeout(() => {
+                                            if (!track.muted) {
+                                                console.log('[Remote Stream] Track already unmuted (missed event) for:', stream.participantId, '- retrying play');
+                                                attemptPlay();
+                                            }
+                                        }, 500);
+                                    }
+                                });
+                            }
+                        }
                     }
                     
                     // Add audio element if stream has audio tracks
@@ -787,7 +855,15 @@
                             log(`Adding audio element for participant ${stream.participantId}`, 'info');
                             addRemoteAudioElement(browserStream, stream.participantId);
                         } else {
-                            log(`Audio element already exists for ${stream.participantId}`, 'info');
+                            // Update srcObject on existing audio element with the new live stream
+                            const existing = remoteAudioElements.get(stream.participantId);
+                            if (existing && existing.audio.srcObject !== browserStream) {
+                                console.log('[Remote Stream] Updating audio srcObject for existing element:', stream.participantId);
+                                existing.audio.srcObject = browserStream;
+                                existing.audio.play().catch(err => {
+                                    if (err.name !== 'AbortError') console.error('[Remote Stream] Error replaying audio for:', stream.participantId, err);
+                                });
+                            }
                         }
                     } else {
                         log(`No audio tracks in remote stream ${stream.streamId}`, 'warning');

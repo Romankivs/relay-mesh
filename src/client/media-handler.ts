@@ -634,11 +634,14 @@ export class MediaHandler {
       );
       (audioSender as any)._sourceStreamId = remoteStream.id;
       (audioSender as any)._sourceParticipantId = originalParticipantId;
+      syntheticStream.addTrack(audioTracks[0]); // include audio in synthetic so remoteStreams has audio+video
       console.log(`[MediaHandler] replaceTracksForParticipant: replaced audio track for ${originalParticipantId.slice(-8)}`);
     }
 
     // Update remoteStreams to the new synthetic stream
     this.remoteStreams.set(originalParticipantId, syntheticStream.getTracks().length > 0 ? syntheticStream : remoteStream);
+    // Note: streamSourcePeer is intentionally NOT updated here — it was set when we first
+    // received the stream via ontrack and should continue to point to the original source peer.
     console.log(`[MediaHandler] replaceTracksForParticipant: updated remoteStreams for ${originalParticipantId.slice(-8)}`);
   }
 
@@ -808,42 +811,40 @@ export class MediaHandler {
     const peerConnection = this.peerConnections.get(remoteParticipantId);
 
     if (peerConnection) {
-      // Stop canvas pipelines for senders on this PC and reset remoteStreams
-      const senders = peerConnection.getSenders();
-      for (const sender of senders) {
-        if (!sender.track) continue;
-        const streamId = (sender.track as any)._sourceStreamId;
-        if (!streamId) continue;
-
-        // Find the relay source element for this stream
-        const relayVideo = this.relaySourceElements.get(streamId);
-        if (relayVideo && (relayVideo as any)._targetPeerId === remoteParticipantId) {
-          // Stop the canvas pipeline
-          if (!(relayVideo as any)._stopped) {
-            (relayVideo as any)._stopped = true;
-            clearInterval((relayVideo as any)._intervalId);
-            relayVideo.srcObject = null;
-            relayVideo.remove();
-            const canvas = (relayVideo as any)._canvas as HTMLCanvasElement | undefined;
-            if (canvas) canvas.remove();
-            this.relaySourceElements.delete(streamId);
-          }
-
-          // Reset remoteStreams to the original stream so next forward can create fresh pipeline
-          const participantId = (relayVideo as any)._participantId;
-          const originalStream = (relayVideo as any)._originalStream;
-          if (participantId && originalStream) {
-            const currentStream = this.remoteStreams.get(participantId);
-            // Only reset if current stream is the synthetic (dead) one
-            if (currentStream && currentStream.id !== originalStream.id) {
-              console.log(
-                `[MediaHandler] Resetting remoteStreams[${participantId.slice(-8)}] from synthetic ${currentStream.id.slice(0,8)} to original ${originalStream.id.slice(0,8)} after peer ${remoteParticipantId.slice(-8)} left`
-              );
-              this.remoteStreams.set(participantId, originalStream);
-            }
+      // For any stream that was received FROM this peer (i.e. streamSourcePeer === remoteParticipantId),
+      // reset remoteStreams back to the original stream so the next forward creates a fresh canvas pipeline.
+      // The synthetic stream's canvas is still running (it feeds other peers too), but we need the
+      // original stream reference so addRemoteStreamForRelay can build a new pipeline for new connections.
+      this.streamSourcePeer.forEach((sourcePeer, participantId) => {
+        if (sourcePeer !== remoteParticipantId) return;
+        const currentStream = this.remoteStreams.get(participantId);
+        if (!currentStream) return;
+        // relaySourceElements is keyed by the ORIGINAL stream ID, but after addRemoteStreamForRelay
+        // runs, remoteStreams[participantId] points to the SYNTHETIC stream. So we can't look up
+        // by currentStream.id — instead, find the relay video element by _participantId.
+        let originalStream: globalThis.MediaStream | undefined;
+        for (const [_origStreamId, relayVideo] of this.relaySourceElements.entries()) {
+          if ((relayVideo as any)._participantId === participantId) {
+            originalStream = (relayVideo as any)._originalStream as globalThis.MediaStream | undefined;
+            break;
           }
         }
-      }
+        if (originalStream && currentStream.id !== originalStream.id) {
+          console.log(
+            `[MediaHandler] Resetting remoteStreams[${participantId.slice(-8)}] from synthetic ${currentStream.id.slice(0,8)} to original ${originalStream.id.slice(0,8)} after source peer ${remoteParticipantId.slice(-8)} left`
+          );
+          this.remoteStreams.set(participantId, originalStream);
+          // Re-emit the original stream so the UI can update the video element's srcObject.
+          // The synthetic stream's tracks are now dead (peer connection closed), so the video
+          // would go black without this. Clear the dedup key so emitResolvedStream fires.
+          this.emittedStreams.delete(`${participantId}-${originalStream.id}`);
+          this.emitResolvedStream(originalStream, participantId);
+        } else if (!originalStream) {
+          console.log(
+            `[MediaHandler] No canvas pipeline found for ${participantId.slice(-8)} (relaySourceElements has ${this.relaySourceElements.size} entries) — remoteStreams entry will be removed by cleanup below`
+          );
+        }
+      });
 
       // Close the connection
       peerConnection.close();
@@ -1220,7 +1221,22 @@ export class MediaHandler {
                   // so the new key won't be blocked)
                   this.emitResolvedStream(alreadyEmittedAsWrongId, originalParticipantId);
                 } else {
-                  console.log(`[MediaHandler] relay-stream-map: no pending stream for ${streamId} (may arrive later via ontrack)`);
+                  // Check if this is a stream replacement: the relay replaced its raw stream with a
+                  // synthetic canvas stream. remoteStreams already has originalParticipantId keyed
+                  // by participant ID (not connection ID), but with a DIFFERENT stream ID.
+                  // The new stream (streamId) will arrive via ontrack shortly — mark it in
+                  // streamIdToParticipantId (already done above) so ontrack can emit it correctly.
+                  // Also update remoteStreams eagerly if we already have the new stream object.
+                  const existingStreamForParticipant = this.remoteStreams.get(originalParticipantId);
+                  if (existingStreamForParticipant && existingStreamForParticipant.id !== streamId) {
+                    console.log(`[MediaHandler] relay-stream-map: stream replacement for ${originalParticipantId.slice(-8)}: old=${existingStreamForParticipant.id.slice(0,8)} new=${streamId.slice(0,8)} — will re-emit when ontrack fires`);
+                    // The new stream object arrives via ontrack. The mapping is already set in
+                    // streamIdToParticipantId so ontrack's knownParticipantId path will handle it.
+                    // Nothing more to do here — ontrack deferred emit will fire emitResolvedStream
+                    // and streamResolvedCallbacks for the new stream.
+                  } else {
+                    console.log(`[MediaHandler] relay-stream-map: no pending stream for ${streamId} (may arrive later via ontrack)`);
+                  }
                 }
               }
             }
