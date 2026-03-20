@@ -1,0 +1,1613 @@
+{
+  "config": {
+    "configFile": "/Users/sviatoslavromankiv/relay-mesh/playwright.config.ts",
+    "rootDir": "/Users/sviatoslavromankiv/relay-mesh/tests/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Users/sviatoslavromankiv/relay-mesh/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/Users/sviatoslavromankiv/relay-mesh/tests/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 120000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "tests/e2e/results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "runAgents": "none",
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.58.2",
+    "workers": 4,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "conference.spec.ts",
+      "file": "conference.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "RelayMesh E2E — real browser WebRTC",
+          "file": "conference.spec.ts",
+          "line": 181,
+          "column": 6,
+          "specs": [
+            {
+              "title": "single participant can join and reach CONNECTED state",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 15012,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "RelayMesh server started on localhost:9100\n"
+                        },
+                        {
+                          "text": "TLS: disabled\n"
+                        },
+                        {
+                          "text": "Authentication: optional\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034768792-vi8rz12ne-6359 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Creating new conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034768792-vi8rz12ne-6359 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m0\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034768792-vi8rz12ne-6359 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test is empty, removing\n"
+                        }
+                      ],
+                      "stderr": [
+                        {
+                          "text": "WARNING: Signaling server starting WITHOUT TLS encryption. This should only be used for development/testing!\n"
+                        },
+                        {
+                          "text": "[browser:Solo] Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                        }
+                      ],
+                      "retry": 0,
+                      "startTime": "2026-03-20T19:26:01.805Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "00c7b5301999a35d306a-acbeccc9a577c4248875",
+              "file": "conference.spec.ts",
+              "line": 202,
+              "column": 7
+            },
+            {
+              "title": "two participants connect and see each other",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 21133,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034786972-3d9z11ivu-3719 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Creating new conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034786972-3d9z11ivu-3719 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m0\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034790338-am4tvpuey-714 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034786972-3d9z11ivu-3719 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034786972-3d9z11ivu-3719 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034790338-am4tvpuey-714 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034786972-3d9z11ivu-3719 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034790338-am4tvpuey-714 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034786972-3d9z11ivu-3719 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034790338-am4tvpuey-714 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034786972-3d9z11ivu-3719 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034790338-am4tvpuey-714 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034786972-3d9z11ivu-3719 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034786972-3d9z11ivu-3719 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034790338-am4tvpuey-714 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test is empty, removing\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-03-20T19:26:19.548Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "00c7b5301999a35d306a-f143ca188be6098b311f",
+              "file": "conference.spec.ts",
+              "line": 215,
+              "column": 7
+            },
+            {
+              "title": "3 participants form a relay mesh topology",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 27817,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034811306-clw6ztghr-9789 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Creating new conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m0\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034814622-xbde47jqj-3809 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034814622-xbde47jqj-3809 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034817964-nzyxu1bny-3020 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m3\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034814622-xbde47jqj-3809 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034814622-xbde47jqj-3809 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034817964-nzyxu1bny-3020 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034814622-xbde47jqj-3809 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034817964-nzyxu1bny-3020 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034814622-xbde47jqj-3809 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034817964-nzyxu1bny-3020 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034814622-xbde47jqj-3809 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034817964-nzyxu1bny-3020 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034814622-xbde47jqj-3809 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034811306-clw6ztghr-9789 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034811306-clw6ztghr-9789 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034814622-xbde47jqj-3809 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034817964-nzyxu1bny-3020 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test is empty, removing\n"
+                        }
+                      ],
+                      "stderr": [
+                        {
+                          "text": "[browser:P0] [RMC:ghr-9789] offer error for bny-3020: InvalidStateError: Failed to execute 'setLocalDescription' on 'RTCPeerConnection': Failed to set local offer sdp: Called in wrong state: have-remote-offer\n"
+                        }
+                      ],
+                      "retry": 0,
+                      "startTime": "2026-03-20T19:26:40.698Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "00c7b5301999a35d306a-0e739ae074b0f000cf1b",
+              "file": "conference.spec.ts",
+              "line": 252,
+              "column": 7
+            },
+            {
+              "title": "relay failover: relay leaves and conference recovers",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 30200,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034840669-zxb5kxjmg-1550 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Creating new conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034840669-zxb5kxjmg-1550 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m0\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034844118-t0jn9kuzr-1472 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034840669-zxb5kxjmg-1550 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034840669-zxb5kxjmg-1550 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034844118-t0jn9kuzr-1472 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034847482-gj0i7k9i6-7534 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m3\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034840669-zxb5kxjmg-1550 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034844118-t0jn9kuzr-1472 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034840669-zxb5kxjmg-1550 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m2\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034840669-zxb5kxjmg-1550 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Disconnect from unknown participant: participant-1774034840669-zxb5kxjmg-1550\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034844118-t0jn9kuzr-1472 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034847482-gj0i7k9i6-7534 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034844118-t0jn9kuzr-1472 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034847482-gj0i7k9i6-7534 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034844118-t0jn9kuzr-1472 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034847482-gj0i7k9i6-7534 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034844118-t0jn9kuzr-1472 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034847482-gj0i7k9i6-7534 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034844118-t0jn9kuzr-1472 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034847482-gj0i7k9i6-7534 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034844118-t0jn9kuzr-1472 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034847482-gj0i7k9i6-7534 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test is empty, removing\n"
+                        }
+                      ],
+                      "stderr": [
+                        {
+                          "text": "[browser:FO1] [RMC:uzr-1472][renegotiate] FAILED for 9i6-7534: InvalidAccessError: Failed to execute 'setLocalDescription' on 'RTCPeerConnection': Failed to set local offer sdp: The order of m-lines in subsequent offer doesn't match order from previous offer/answer.\n"
+                        }
+                      ],
+                      "retry": 0,
+                      "startTime": "2026-03-20T19:27:08.523Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "00c7b5301999a35d306a-6a4eef3bbb14d36ad2e9",
+              "file": "conference.spec.ts",
+              "line": 299,
+              "column": 7
+            },
+            {
+              "title": "participant can leave and rejoin cleanly",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 17987,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034863165-cl0gsa0mt-9391 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Creating new conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034863165-cl0gsa0mt-9391 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m0\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034863165-cl0gsa0mt-9391 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test is empty, removing\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Disconnect from unknown participant: participant-1774034863165-cl0gsa0mt-9391\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034866643-zvi4bkht2-1652 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Creating new conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034866643-zvi4bkht2-1652 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m0\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034866643-zvi4bkht2-1652 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test is empty, removing\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-03-20T19:27:38.735Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "00c7b5301999a35d306a-5049eb7005c2f027a06c",
+              "file": "conference.spec.ts",
+              "line": 363,
+              "column": 7
+            },
+            {
+              "title": "collects real WebRTC getStats() metrics after connection",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 24316,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034884249-454q08xb0-4384 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Creating new conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034884249-454q08xb0-4384 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m0\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant joining: participant-1774034887624-s2s7jgcmg-6570 conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m2\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034884249-454q08xb0-4384 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034884249-454q08xb0-4384 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034887624-s2s7jgcmg-6570 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034884249-454q08xb0-4384 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034887624-s2s7jgcmg-6570 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034884249-454q08xb0-4384 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034887624-s2s7jgcmg-6570 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034884249-454q08xb0-4384 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034887624-s2s7jgcmg-6570 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034884249-454q08xb0-4384 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034887624-s2s7jgcmg-6570 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034884249-454q08xb0-4384 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Received metrics broadcast from: participant-1774034887624-s2s7jgcmg-6570 in conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Broadcasting to \u001b[33m1\u001b[39m other participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Metrics broadcast sent to \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034884249-454q08xb0-4384 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m1\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "📊 Stored relay selection data for conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Participant disconnected: participant-1774034887624-s2s7jgcmg-6570 from conference: e2e-test\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test now has \u001b[33m0\u001b[39m participants\n"
+                        },
+                        {
+                          "text": "[SignalingServer] Conference e2e-test is empty, removing\n"
+                        },
+                        {
+                          "text": "RelayMesh server stopped\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-03-20T19:27:56.748Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "00c7b5301999a35d306a-6131a0ee27842143073a",
+              "file": "conference.spec.ts",
+              "line": 386,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-03-20T19:26:01.034Z",
+    "duration": 140358.12699999998,
+    "expected": 6,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}
