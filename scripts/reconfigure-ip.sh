@@ -8,18 +8,58 @@ NEW_IP=$(curl -s ifconfig.me)
 echo "Detected external IP: $NEW_IP"
 NEW_DOMAIN="${NEW_IP}.nip.io"
 
-# Update nginx config
-sudo sed -i "s/server_name .*/server_name ${NEW_DOMAIN};/" /etc/nginx/sites-available/relay-mesh
-sudo sed -i "s|/etc/letsencrypt/live/[^/]*/fullchain.pem|/etc/letsencrypt/live/${NEW_DOMAIN}/fullchain.pem|" /etc/nginx/sites-available/relay-mesh
-sudo sed -i "s|/etc/letsencrypt/live/[^/]*/privkey.pem|/etc/letsencrypt/live/${NEW_DOMAIN}/privkey.pem|" /etc/nginx/sites-available/relay-mesh
+# Write nginx config from template (ensures all proxy locations are always present)
+sudo tee /etc/nginx/sites-enabled/relay-mesh > /dev/null <<EOF
+server {
+    listen 443 ssl;
+    server_name ${NEW_DOMAIN};
 
-# Get new TLS cert
-sudo certbot certonly --nginx -d "$NEW_DOMAIN" --non-interactive --agree-tos -m romankiv1771@gmail.com
+    ssl_certificate /etc/letsencrypt/live/${NEW_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${NEW_DOMAIN}/privkey.pem;
 
-# Reload nginx
+    root /home/sviatoslavromankiv/relay-mesh;
+    index examples/simple-client/index.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    # Proxy REST API (monitoring dashboard)
+    location /api {
+        proxy_pass http://localhost:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+    }
+
+    # Proxy WebSocket signaling
+    location /ws {
+        proxy_pass http://localhost:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name ${NEW_DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+EOF
 sudo nginx -t && sudo systemctl reload nginx
 
-# Update simple-client default signaling URL
+# Get new TLS cert and let certbot update nginx config automatically
+sudo certbot --nginx -d "$NEW_DOMAIN" --non-interactive --agree-tos -m romankiv1771@gmail.com --redirect
+
+# Reload nginx (certbot may have already done this, but just in case)
+sudo nginx -t && sudo systemctl reload nginx
+
+# Update simple-client default signaling URL (handles both localhost default and previous nip.io)
+sed -i "s|ws://localhost:8080|wss://${NEW_DOMAIN}/ws|g" ~/relay-mesh/examples/simple-client/index.html
 sed -i "s|wss://[^'\"]*\.nip\.io/ws|wss://${NEW_DOMAIN}/ws|g" ~/relay-mesh/examples/simple-client/index.html
 
 # Restart relay-mesh service
