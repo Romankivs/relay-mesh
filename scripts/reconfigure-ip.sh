@@ -8,7 +8,23 @@ NEW_IP=$(curl -s ifconfig.me)
 echo "Detected external IP: $NEW_IP"
 NEW_DOMAIN="${NEW_IP}.nip.io"
 
-# Write nginx config from template (ensures all proxy locations are always present)
+# Write temporary HTTP-only nginx config so certbot can complete the HTTP challenge
+sudo tee /etc/nginx/sites-enabled/relay-mesh > /dev/null <<EOF
+server {
+    listen 80;
+    server_name ${NEW_DOMAIN};
+    root /home/sviatoslavromankiv/relay-mesh;
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+EOF
+sudo nginx -t && sudo systemctl reload nginx
+
+# Get new TLS cert
+sudo certbot certonly --nginx -d "$NEW_DOMAIN" --non-interactive --agree-tos -m romankiv1771@gmail.com
+
+# Write full HTTPS nginx config now that the cert exists
 sudo tee /etc/nginx/sites-enabled/relay-mesh > /dev/null <<EOF
 server {
     listen 443 ssl;
@@ -50,12 +66,6 @@ server {
     return 301 https://\$host\$request_uri;
 }
 EOF
-sudo nginx -t && sudo systemctl reload nginx
-
-# Get new TLS cert and let certbot update nginx config automatically
-sudo certbot --nginx -d "$NEW_DOMAIN" --non-interactive --agree-tos -m romankiv1771@gmail.com --redirect
-
-# Reload nginx (certbot may have already done this, but just in case)
 sudo nginx -t && sudo systemctl reload nginx
 
 # Update simple-client default signaling URL (handles both localhost default and previous nip.io)
