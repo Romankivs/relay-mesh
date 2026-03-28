@@ -43,11 +43,15 @@ describe('Conference Lifecycle Integration Tests', () => {
     for (const client of clients) {
       try {
         if (client.getCurrentState() === ConferenceState.CONNECTED) {
-          await client.leaveConference();
+          await Promise.race([
+            client.leaveConference(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('leave timeout')), 3000)),
+          ]);
         }
       } catch (error) {
         // Ignore errors during cleanup
       }
+      client.destroy();
     }
     clients = [];
 

@@ -127,6 +127,8 @@ export class SignalingServer {
         // Start listening
         this.server.listen(this.config.port, () => {
           this.startTime = Date.now();
+          // unref() so the server doesn't prevent the process from exiting
+          this.server?.unref();
           resolve();
         });
 

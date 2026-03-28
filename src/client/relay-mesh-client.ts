@@ -477,6 +477,18 @@ export class RelayMeshClient extends EventEmitter {
     return this.stateMachine.getCurrentState();
   }
 
+  /** Force cleanup all resources regardless of state. Use in test teardown. */
+  destroy(): void {
+    if (this.statsPollingInterval) { clearInterval(this.statsPollingInterval); this.statsPollingInterval = null; }
+    if (this.metricsUpdateInterval) { clearInterval(this.metricsUpdateInterval); this.metricsUpdateInterval = null; }
+    if (this.streamMapRefreshInterval) { clearInterval(this.streamMapRefreshInterval); this.streamMapRefreshInterval = null; }
+    if (this.relayEngine) { this.relayEngine.stopRelay(); this.relayEngine = null; }
+    if (this.mediaHandler) { this.mediaHandler.closeAllConnections(); this.mediaHandler = null; }
+    if (this.metricsCollector) { this.metricsCollector.stopCollection(); this.metricsCollector = null; }
+    this.signalingClient.disconnect();
+    this.removeAllListeners();
+  }
+
   getConferenceInfo(): ConferenceInfo | null {
       const conferenceId = this.stateMachine.getConferenceId();
       const participantId = this.stateMachine.getParticipantId();

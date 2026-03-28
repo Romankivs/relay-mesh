@@ -10,7 +10,7 @@
     "build:all": "npm run build && npm run build:browser",
     "test": "jest",
     "test:unit": "jest --testPathIgnorePatterns=integration --forceExit",
-    "test:integration": "jest --testPathPattern=integration --forceExit --silent",
+    "test:integration": "kill $(lsof -ti:8091,8092,8093,8094,8095) 2>/dev/null; jest --testPathPattern=integration --forceExit --silent",
     "test:watch": "jest --watch",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
