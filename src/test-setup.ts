@@ -66,6 +66,7 @@ class MockRTCPeerConnection {
   iceGatheringState: RTCIceGatheringState = 'new';
   signalingState: RTCSignalingState = 'stable';
   private eventListeners: Map<string, Function[]> = new Map();
+  private senders: RTCRtpSender[] = [];
 
   constructor(config?: RTCConfiguration) {
     // Mock implementation
@@ -100,7 +101,28 @@ class MockRTCPeerConnection {
   }
 
   addTrack(track: MediaStreamTrack, ...streams: MediaStream[]): RTCRtpSender {
-    return {} as RTCRtpSender;
+    const sender = { track, replaceTrack: jest.fn() } as unknown as RTCRtpSender;
+    this.senders.push(sender);
+    return sender;
+  }
+
+  getSenders(): RTCRtpSender[] {
+    return this.senders;
+  }
+
+  getReceivers(): RTCRtpReceiver[] {
+    return [];
+  }
+
+  createDataChannel(label: string, options?: RTCDataChannelInit): RTCDataChannel {
+    return {
+      label,
+      readyState: 'open',
+      send: jest.fn(),
+      close: jest.fn(),
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    } as unknown as RTCDataChannel;
   }
 
   addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
