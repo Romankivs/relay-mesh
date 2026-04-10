@@ -24,6 +24,7 @@ export interface RelayMeshClientConfig {
   selectionConfig?: Partial<SelectionConfig>;
   peerConnectionConfig?: Partial<PeerConnectionConfig>;
   enforceSecureConnection?: boolean; // For testing only - default: true
+  bandwidthTestDurationMs?: number; // For testing only - reduces startup time
 }
 
 export interface ConferenceInfo {
@@ -137,7 +138,12 @@ export class RelayMeshClient extends EventEmitter {
       this.signalingClient['config'].participantId = participantId;
       
       // Initialize metrics collector with actual participant ID
-      this.metricsCollector = new MetricsCollector({ participantId });
+      this.metricsCollector = new MetricsCollector({
+        participantId,
+        ...(this.config.bandwidthTestDurationMs !== undefined && {
+          bandwidthTestDurationMs: this.config.bandwidthTestDurationMs,
+        }),
+      });
       
       // Set up metrics collector events
       this.metricsCollector.onMetricsUpdate((metrics) => {
@@ -485,7 +491,11 @@ export class RelayMeshClient extends EventEmitter {
     if (this.relayEngine) { this.relayEngine.stopRelay(); this.relayEngine = null; }
     if (this.mediaHandler) { this.mediaHandler.closeAllConnections(); this.mediaHandler = null; }
     if (this.metricsCollector) { this.metricsCollector.stopCollection(); this.metricsCollector = null; }
+    // disconnect() clears reconnect timers and closes the WebSocket
     this.signalingClient.disconnect();
+    // Also terminate the raw socket for immediate closure
+    const ws = (this.signalingClient as any).ws;
+    if (ws && typeof ws.terminate === 'function') ws.terminate();
     this.removeAllListeners();
   }
 

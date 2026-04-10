@@ -164,6 +164,10 @@ export class SignalingServer {
 
       // Close WebSocket server
       if (this.wss) {
+        // Terminate all WebSocket connections immediately
+        this.wss.clients.forEach((client) => {
+          try { client.terminate(); } catch (_) {}
+        });
         this.wss.close(() => {
           // Close HTTP/HTTPS server
           if (this.server) {

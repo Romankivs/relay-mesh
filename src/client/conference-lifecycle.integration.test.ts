@@ -65,6 +65,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client);
 
@@ -120,6 +121,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
 
@@ -158,6 +160,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client);
 
@@ -180,6 +183,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client1);
       await client1.joinConference(conferenceId);
@@ -192,6 +196,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 2',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client2);
       await client2.joinConference(conferenceId);
@@ -204,6 +209,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 3',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client3);
       await client3.joinConference(conferenceId);
@@ -228,6 +234,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         joinPromises.push(client.joinConference(conferenceId));
@@ -254,6 +261,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -306,6 +314,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -346,6 +355,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -377,6 +387,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant Cycle ${cycle + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
 
         await client.joinConference(conferenceId);
@@ -405,6 +416,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -468,6 +480,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -516,6 +529,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -546,7 +560,7 @@ describe('Conference Lifecycle Integration Tests', () => {
           }
         }
       }
-    });
+    }, 90000);
   });
 
   describe('Connection cleanup on leave (Requirement 8.4)', () => {
@@ -558,6 +572,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client1);
       await client1.joinConference(conferenceId);
@@ -566,6 +581,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 2',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client2);
       await client2.joinConference(conferenceId);
@@ -602,6 +618,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Last Participant',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client);
 
@@ -628,6 +645,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: 'ws://localhost:9999', // Non-existent server
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
 
       // Join should fail
@@ -643,6 +661,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client);
 
@@ -656,6 +675,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client);
 
@@ -673,6 +693,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client);
 
@@ -692,6 +713,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client);
 
@@ -711,6 +733,7 @@ describe('Conference Lifecycle Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'Participant 1',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(client);
 

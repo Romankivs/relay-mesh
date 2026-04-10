@@ -68,6 +68,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -124,6 +125,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -186,6 +188,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -255,6 +258,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -307,6 +311,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -378,6 +383,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -445,6 +451,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -503,6 +510,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -556,6 +564,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -605,6 +614,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -657,6 +667,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -702,6 +713,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -725,6 +737,7 @@ describe('Relay Failover Integration Tests', () => {
         signalingServerUrl: serverUrl,
         participantName: 'New Participant',
         enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
       });
       clients.push(newClient);
       const joinPromise = newClient.joinConference(conferenceId);
@@ -756,6 +769,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -783,6 +797,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -811,6 +826,7 @@ describe('Relay Failover Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: 'Recovery Participant',
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(newClient);
         await newClient.joinConference(conferenceId);

@@ -149,8 +149,10 @@ export class MetricsCollector {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
 
-          // Wait for test to complete
-          await new Promise(resolve => setTimeout(resolve, this.bandwidthTestDurationMs + 500));
+          // Wait for test to complete (skip if duration is 0)
+          if (this.bandwidthTestDurationMs > 0) {
+            await new Promise(resolve => setTimeout(resolve, this.bandwidthTestDurationMs + 500));
+          }
 
           // Calculate bandwidth in Mbps
           const uploadDurationSec = (Date.now() - uploadStartTime) / 1000;

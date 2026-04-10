@@ -14,9 +14,7 @@ module.exports = {
   coverageReporters: ['text', 'lcov', 'html'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   verbose: true,
-  testTimeout: 30000,
+  testTimeout: 60000,
   // Run integration tests serially to avoid port conflicts
   maxWorkers: 1,
-  // Increase timeout for integration tests
-  testTimeout: 60000
 };

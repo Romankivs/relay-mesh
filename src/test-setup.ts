@@ -115,14 +115,21 @@ class MockRTCPeerConnection {
   }
 
   createDataChannel(label: string, options?: RTCDataChannelInit): RTCDataChannel {
-    return {
+    const dc = {
       label,
       readyState: 'open',
       send: jest.fn(),
       close: jest.fn(),
       addEventListener: jest.fn(),
       removeEventListener: jest.fn(),
+      onopen: null as ((event: Event) => void) | null,
+      onmessage: null as ((event: MessageEvent) => void) | null,
+      onclose: null as ((event: Event) => void) | null,
+      onerror: null as ((event: Event) => void) | null,
     } as unknown as RTCDataChannel;
+    // Fire onopen asynchronously so handlers can be set first
+    setTimeout(() => { if ((dc as any).onopen) (dc as any).onopen(new Event('open')); }, 0);
+    return dc;
   }
 
   addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
@@ -189,4 +196,12 @@ beforeAll(() => {
 
   // Mock MediaStream
   (global as any).MediaStream = MockMediaStream;
+
+  // Mock RTCSessionDescription and RTCIceCandidate
+  (global as any).RTCSessionDescription = class {
+    constructor(public init: RTCSessionDescriptionInit) {}
+  };
+  (global as any).RTCIceCandidate = class {
+    constructor(public init: RTCIceCandidateInit) {}
+  };
 });

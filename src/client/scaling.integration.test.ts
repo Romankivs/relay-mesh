@@ -89,6 +89,7 @@ describe('Scaling Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -121,6 +122,7 @@ describe('Scaling Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -154,6 +156,7 @@ describe('Scaling Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -196,6 +199,7 @@ describe('Scaling Integration Tests', () => {
             signalingServerUrl: serverUrl,
             participantName: `Participant ${i + 1}`,
             enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
           });
           clients.push(client);
           await client.joinConference(conferenceId);
@@ -236,6 +240,7 @@ describe('Scaling Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -251,6 +256,7 @@ describe('Scaling Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
@@ -286,6 +292,7 @@ describe('Scaling Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         joinPromises.push(client.joinConference(conferenceId));
@@ -314,6 +321,7 @@ describe('Scaling Integration Tests', () => {
           signalingServerUrl: serverUrl,
           participantName: `Participant ${i + 1}`,
           enforceSecureConnection: false,
+          bandwidthTestDurationMs: 0,
         });
         clients.push(client);
         await client.joinConference(conferenceId);
