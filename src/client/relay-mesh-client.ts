@@ -322,6 +322,8 @@ export class RelayMeshClient extends EventEmitter {
 
         let totalBytesSent = 0;
         let totalBytesReceived = 0;
+        let maxAvailableUploadBps = 0;
+        let maxAvailableDownloadBps = 0;
 
         for (const [peerId, pc] of peerConnections) {
           if (pc.connectionState !== 'connected') continue;
@@ -338,6 +340,15 @@ export class RelayMeshClient extends EventEmitter {
                   typeof report.currentRoundTripTime === 'number') {
                 this.metricsCollector!.updateLatency(peerId, report.currentRoundTripTime * 1000);
               }
+              if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                // Collect available bitrate estimates (channel capacity, not current usage)
+                if (typeof report.availableOutgoingBitrate === 'number' && report.availableOutgoingBitrate > 0) {
+                  maxAvailableUploadBps = Math.max(maxAvailableUploadBps, report.availableOutgoingBitrate);
+                }
+                if (typeof report.availableIncomingBitrate === 'number' && report.availableIncomingBitrate > 0) {
+                  maxAvailableDownloadBps = Math.max(maxAvailableDownloadBps, report.availableIncomingBitrate);
+                }
+              }
               if (report.type === 'outbound-rtp' && typeof report.bytesSent === 'number') {
                 totalBytesSent += report.bytesSent;
               }
@@ -350,6 +361,17 @@ export class RelayMeshClient extends EventEmitter {
           }
         }
 
+        // Prefer availableOutgoingBitrate / availableIncomingBitrate (channel capacity estimate)
+        // over byte-delta calculation (current usage) when available.
+        // Note: availableIncomingBitrate is rarely reported by browsers, so we fall back
+        // to the delta method for download even when availableOutgoingBitrate is present.
+        if (maxAvailableUploadBps > 0 || maxAvailableDownloadBps > 0) {
+          this.metricsCollector.updateAvailableBandwidth(
+            maxAvailableUploadBps / 1_000_000,
+            maxAvailableDownloadBps / 1_000_000,
+          );
+        }
+
         // Derive bandwidth from byte deltas between polls
         const now = Date.now();
         if (this.lastStatsSnapshot && totalBytesSent + totalBytesReceived > 0) {
@@ -357,10 +379,20 @@ export class RelayMeshClient extends EventEmitter {
           if (dtSec > 0) {
             const uploadMbps = ((totalBytesSent - this.lastStatsSnapshot.bytesSent) * 8) / (dtSec * 1_000_000);
             const downloadMbps = ((totalBytesReceived - this.lastStatsSnapshot.bytesReceived) * 8) / (dtSec * 1_000_000);
-            this.metricsCollector.updateBandwidth(
-              Math.max(0, uploadMbps),
-              Math.max(0, downloadMbps),
-            );
+            // Use delta-based upload only if availableOutgoingBitrate is not available
+            // Always use delta-based download since availableIncomingBitrate is rarely reported
+            if (maxAvailableUploadBps === 0) {
+              this.metricsCollector.updateBandwidth(
+                Math.max(0, uploadMbps),
+                Math.max(0, downloadMbps),
+              );
+            } else {
+              // Upload from availableOutgoingBitrate already set, update download from delta
+              this.metricsCollector.updateBandwidth(
+                maxAvailableUploadBps / 1_000_000,
+                Math.max(0, downloadMbps),
+              );
+            }
           }
         }
         if (totalBytesSent + totalBytesReceived > 0) {

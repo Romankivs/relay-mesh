@@ -502,8 +502,7 @@
                     <tr>
                         <th>Participant</th>
                         <th>Role</th>
-                        <th>Upload</th>
-                        <th>Download</th>
+                        <th>Bandwidth</th>
                         <th>Latency (avg/min/max)</th>
                         <th>Packet Loss</th>
                         <th>Jitter</th>
@@ -982,7 +981,6 @@
                     <td>${p.name || p.id}</td>
                     <td><span class="badge ${displayRole}">${displayRole.toUpperCase()}</span></td>
                     <td>${bw ? v(bw.uploadMbps, ' Mbps') : '—'}</td>
-                    <td>${bw ? v(bw.downloadMbps, ' Mbps') : '—'}</td>
                     <td>${latStr}</td>
                     <td>${stab ? v(stab.packetLossPercent, '%') : '—'}</td>
                     <td>${stab ? v(stab.jitterMs, ' ms') : '—'}</td>

@@ -56,13 +56,12 @@ export class SelectionAlgorithm {
 
   /**
    * Calculate bandwidth score (0-1)
-   * Prioritizes upload bandwidth (relay nodes send more than receive)
-   * Formula: uploadScore * 0.7 + downloadScore * 0.3
+   * Based on available outgoing bandwidth (availableOutgoingBitrate from RTCStats).
+   * Normalized to 10 Mbps as a reference for a good relay connection.
+   * Scores linearly from 0 at 0 Mbps to 1.0 at 10 Mbps and above.
    */
   private calculateBandwidthScore(uploadMbps: number, downloadMbps: number): number {
-    const uploadScore = Math.min(uploadMbps / 20, 1.0);
-    const downloadScore = Math.min(downloadMbps / 50, 1.0);
-    return uploadScore * 0.7 + downloadScore * 0.3;
+    return Math.min(uploadMbps / 10, 1.0);
   }
 
   /**

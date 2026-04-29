@@ -570,6 +570,24 @@ export class MetricsCollector {
   }
 
   /**
+   * Update bandwidth from availableOutgoingBitrate / availableIncomingBitrate
+   * reported by the candidate-pair RTCStats entry.
+   * These values reflect the estimated channel capacity rather than current usage,
+   * so they are preferred over byte-delta calculations when available.
+   */
+  updateAvailableBandwidth(availableUploadMbps: number, availableDownloadMbps: number): void {
+    // Only update if the values are plausible (> 0)
+    if (availableUploadMbps > 0) {
+      this.rtcUploadMbps = availableUploadMbps;
+      this.hasRTCBandwidth = true;
+    }
+    if (availableDownloadMbps > 0) {
+      this.rtcDownloadMbps = availableDownloadMbps;
+      this.hasRTCBandwidth = true;
+    }
+  }
+
+  /**
    * Snapshot current latency/stability/bandwidth into currentMetrics and notify subscribers.
    * Called after each RTCStats poll so the dashboard sees fresh values without waiting
    * for the full 30s collectMetrics cycle.
